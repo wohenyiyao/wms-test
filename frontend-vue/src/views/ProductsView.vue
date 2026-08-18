@@ -10,7 +10,7 @@
  *
  * 任务 3 已修复：
  * - 编辑/新增后保持当前页码，不再跳回第 1 页
- * - 删除有库存/明细的商品：提示 → 二次确认 → 后端事务内级联清理
+ * - 删除有库存/历史入库记录的商品：提示 → 二次确认 → 后端事务内级联清理
  */
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -79,7 +79,7 @@ const handleSubmit = async () => {
   }
 }
 
-// 删除：默认有关联库存/明细时后端返回 400 提示 → 二次确认后 force 重试（任务 3 修复）
+// 删除：默认有关联库存/历史入库记录时后端返回 400 提示 → 二次确认后 force 重试（任务 3 修复）
 const handleDelete = async (id: number) => {
   try {
     await ElMessageBox.confirm('确定删除该商品吗？', '确认删除', { type: 'warning' })

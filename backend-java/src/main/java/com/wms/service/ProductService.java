@@ -72,10 +72,10 @@ public class ProductService {
     /**
      * 删除商品（任务 3 修复）。
      *
-     * 安全策略：默认校验关联数据（库存 / 入库单明细）——
-     * 有关联时返回 400 提示关联数量，由前端二次确认后带 force=true 重试；
-     * force=true 时在同一事务内级联清理关联库存与入库单明细后再删除商品，
-     * 避免「商品删了、库存/明细成为孤立脏数据」（预埋 Bug 根因）。
+     * 安全策略：默认校验关联数据（库存 / 历史入库记录）——
+     * 有关联时返回 400 提示数量，由前端二次确认后带 force=true 重试；
+     * force=true 时在同一事务内级联清理关联库存与历史入库记录后再删除商品，
+     * 避免「商品删了、库存/记录成为孤立脏数据」（预埋 Bug 根因）。
      */
     @Transactional
     public void delete(Long id, boolean force) {
@@ -83,21 +83,21 @@ public class ProductService {
             throw new BusinessException(404, "商品不存在");
         }
         long inventoryCount = inventoryRepository.countByProductId(id);
-        long itemCount = inboundOrderItemRepository.countByProductId(id);
+        long recordCount = inboundOrderItemRepository.countByProductId(id);
 
-        if ((inventoryCount > 0 || itemCount > 0) && !force) {
+        if ((inventoryCount > 0 || recordCount > 0) && !force) {
             throw new BusinessException(400,
-                    "该商品存在库存 " + inventoryCount + " 条、入库明细 " + itemCount
+                    "该商品存在库存 " + inventoryCount + " 条、历史入库记录 " + recordCount
                             + " 条，删除将同时清理关联数据，请确认后重试");
         }
         if (inventoryCount > 0) {
             inventoryRepository.deleteByProductId(id);
         }
-        if (itemCount > 0) {
+        if (recordCount > 0) {
             inboundOrderItemRepository.deleteByProductId(id);
         }
         productRepository.deleteById(id);
-        log.info("删除商品: id={}, force={}, 清理库存={}条/明细={}条", id, force, inventoryCount, itemCount);
+        log.info("删除商品: id={}, force={}, 清理库存={}条/入库记录={}条", id, force, inventoryCount, recordCount);
     }
 
     private ProductResponse toResponse(Product product) {

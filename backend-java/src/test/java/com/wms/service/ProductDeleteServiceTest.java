@@ -61,7 +61,7 @@ class ProductDeleteServiceTest {
 
     @Test
     void delete_withInventory_forceTrue_shouldCascadeClean() {
-        // given：新商品 + 入库（库存 + 入库明细关联）
+        // given：新商品 + 入库（库存 + 历史入库记录关联）
         Product p = saveProduct();
         inventoryService.createInboundOrder(inboundRequest(p.getId(), 7, "WH-A-01-01"));
         long invBefore = inventoryRepository.countByProductId(p.getId());
@@ -72,15 +72,15 @@ class ProductDeleteServiceTest {
         // when：force=true 删除
         productService.delete(p.getId(), true);
 
-        // then：商品、关联库存、关联入库明细全部清理（无孤立脏数据）
+        // then：商品、关联库存、关联历史入库记录全部清理（无孤立脏数据）
         assertFalse(productRepository.existsById(p.getId()), "商品应被删除");
         assertEquals(0, inventoryRepository.countByProductId(p.getId()), "关联库存应被级联清理");
-        assertEquals(0, inboundOrderItemRepository.countByProductId(p.getId()), "关联入库明细应被级联清理");
+        assertEquals(0, inboundOrderItemRepository.countByProductId(p.getId()), "关联历史入库记录应被级联清理");
     }
 
     @Test
     void delete_withoutAnyReference_shouldSucceed() {
-        // given：新商品，无任何库存/明细关联
+        // given：新商品，无任何库存/入库记录关联
         Product p = saveProduct();
         assertEquals(0, inventoryRepository.countByProductId(p.getId()));
         assertEquals(0, inboundOrderItemRepository.countByProductId(p.getId()));
