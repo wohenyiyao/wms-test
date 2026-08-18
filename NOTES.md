@@ -179,7 +179,7 @@
 | 查询实现 | 单条 JPQL：`Inventory JOIN Product JOIN Location JOIN Warehouse`，一次查询返回含商品名/SKU/仓库名的响应（库存表无仓库字段，经 库位编码→库位→仓库 反查） |
 | 筛选 | `keyword` 模糊匹配 商品名称 / SKU / 库位编码（用户拍板：一个输入框覆盖三者）；`warehouseId` 精确筛选仓库 |
 | 告急筛选（增强） | `lowStockOnly=true` 时仅返回 `quantity < 10`，支撑前端「告急库存提示条」点击切换（API_SPEC 未定义，属用户要求的交互增强） |
-| 分页 | Spring Data `Pageable` 自动 count；pageSize 上限 100、页码下限 1（沿用可用性兜底） |
+| 分页 | **两步查询**：先查 id 集合（走主键索引零回表，分页+count 在此层）→ 再 `IN` 取详情按 id 重排（回表只发生在要返回的行）；pageSize 上限 100、页码下限 1；**OFFSET 深度上限 10000**（深分页兜底，超限返回 400 提示缩小筛选） |
 | 性能 | join 全部走主键 / 唯一键（`products.id`、`locations.code`、`warehouses.id`）；`warehouseId` 走 `locations.warehouse_id` 外键索引；单查询避免 N+1；`LIKE %kw%` 前导通配无法走索引（测试规模可接受，见 review） |
 
 ### 4.2.1 设计沟通记录（人主导决策，AI 提供分析并执行）
@@ -218,10 +218,10 @@
 
 | 手段 | 内容 | 结果 |
 |------|------|:---:|
-| `smoke-test.ps1`（接口冒烟，21 用例） | 原 16 用例 + 库存 5 用例（PageResult 结构 / keyword 筛选 / warehouseId 筛选 / lowStockOnly 告急 / pageSize 上限） | ✅ 全过 |
-| `InventoryQueryServiceTest`（Service 层，5 用例） | 字段完整（含仓库名 join 反查）、keyword 按 SKU/库位筛选、warehouseId 筛选（WH-A/WH-B 互斥）、lowStockOnly 只返回 <10、分页 page/pageSize/total | ✅ 全过 |
-| `InventoryApiTest`（API 层，6 用例） | 200 + PageResult 结构、keyword 行级断言、warehouseId 仓库名非空、lowStockOnly 每行 <10、pageSize 9999 截断 100、page=0 回退第 1 页 | ✅ 全过 |
-| `mvn test` 全量 | 20 用例（任务 1 的 9 + 任务 2 的 11） | ✅ 全过 |
+| `smoke-test.ps1`（接口冒烟，22 用例） | 原 16 用例 + 库存 6 用例（PageResult 结构 / keyword 筛选 / warehouseId 筛选 / lowStockOnly 告急 / pageSize 上限 / **深分页兜底 400**） | ✅ 全过 |
+| `InventoryQueryServiceTest`（Service 层，6 用例） | 字段完整（含仓库名 join 反查）、keyword 按 SKU/库位筛选、warehouseId 筛选（WH-A/WH-B 互斥）、lowStockOnly 只返回 <10、分页 page/pageSize/total、**深分页 offset 超限抛 400（含边界 9900 通过）** | ✅ 全过 |
+| `InventoryApiTest`（API 层，7 用例） | 200 + PageResult 结构、keyword 行级断言、warehouseId 仓库名非空、lowStockOnly 每行 <10、pageSize 9999 截断 100、page=0 回退第 1 页、**深分页 400** | ✅ 全过 |
+| `mvn test` 全量 | 22 用例（任务 1 的 9 + 任务 2 的 13） | ✅ 全过 |
 
 > 测试数据确定性：Service 测试内新建唯一商品（UUID SKU）并入库，再断言查询行为，不依赖既有库存数据。
 
@@ -247,12 +247,14 @@
 - 查询接口只读，无事务写操作；`PageResult` 组装无状态，无部分成功问题。
 
 **② SQL 性能**
-- 单条 JPQL 一次 join 三表，避免「列表查询 + 逐行反查商品/仓库」的 N+1；
-- **筛选字段索引**（本轮补齐）：`inventory.location_code`（`idx_inventory_location_code`）、`products.name`（`idx_products_name`），均由 JPA `@Table(indexes=...)` 注解声明、`ddl-auto=update` 自动建索引；`warehouseId` 筛选走 `locations.warehouse_id` 外键索引（MySQL 对 FK 列自动建索引，已存在）；
-- 分页由 Spring Data 自动生成 count 查询（轻量）；
-- **EXPLAIN 验证**：查询计划的 `possible_keys` 已包含 `idx_inventory_location_code`、`warehouse_id` 等索引（当前仅 8 行库存，优化器按成本选全表扫描属正常；数据量上来后自动走索引）；
-- **顺带清理冗余索引**：inventory 表存在两个完全相同的唯一索引（模板 SQL 的 `uk_product_location` 与 Hibernate 按实体注解生成的 `UK3kq...`）——删除模板 SQL 建的冗余索引，避免写放大与空间浪费；
-- 已知边界：`LIKE '%kw%'` 前导通配无法走索引（B-tree 仅支持等值/前缀匹配），keyword 命中 name/sku/locationCode 三列，测试规模可接受；生产可考虑全文索引（`FULLTEXT`）或前缀匹配改造。
+- **分页采用两步查询（延迟回表）**：`findIdsByFilters` 只查 `SELECT i.id`（走主键/筛选索引，无回表，分页 + count 在此层）→ `findDetailsByIds` 按 `id IN` 查完整明细，回表只发生在真正要返回的行；两次查询同置于 `@Transactional(readOnly=true)` 保证同一快照；
+- 单条 join 查询避免「逐行反查商品/仓库」的 N+1；join 走主键 / 唯一键 / 外键索引（见下）；
+- **筛选字段索引**：`inventory.location_code`（`idx_inventory_location_code`）、`products.name`（`idx_products_name`），JPA `@Table(indexes=...)` 声明、`ddl-auto=update` 自动建；`warehouseId` 走 `locations.warehouse_id` 外键索引；
+- **深分页兜底**：`OFFSET = (page-1)*pageSize > 10000` 时拒绝查询（`BusinessException 400`，提示缩小筛选），防止页码无限增大导致全表扫描；
+- **游标分页（keyset）演进方案**：自增主键满足 keyset 条件（`WHERE id > :lastId ORDER BY id LIMIT :size`），可根治深分页；但会破坏「页码跳转 + total」契约与现有分页 UI，且当前数据规模无深分页问题——**当前保留 offset 分页 + 深度兜底**，数据量增大（如选做 C 500+ 行）时再切游标；
+- **EXPLAIN 验证**：查询 `possible_keys` 已包含 `idx_inventory_location_code`、`warehouse_id` 等索引（当前仅个位数库存行，优化器按成本选全表扫描属正常；数据量上来后自动走索引）；
+- **清理冗余索引**：inventory 表两个完全相同的唯一索引（模板 SQL `uk_product_location` 与 Hibernate `UK3kq...`）——删除模板 SQL 建的冗余索引，避免写放大；
+- 已知边界：`LIKE '%kw%'` 前导通配无法走索引（B-tree 仅等值/前缀），keyword 命中 name/sku/locationCode 三列，测试规模可接受；生产可考虑 FULLTEXT 或前缀匹配改造。
 
 **③ 空指针风险**
 - `keyword`/`warehouseId` 可空：Service 层 blank→null 归一，JPQL `:param IS NULL` 短路，无 NPE；
@@ -264,7 +266,7 @@
 
 ### 4.8 验收结论
 
-任务 2 功能闭环完整（搜索/筛选/告急/分页/高亮）、API_SPEC 与考核点全部满足、冒烟 21 用例 + 2 个测试类全绿（20 测试）、漏洞思考中分页上限已兜底、review 确认索引与空指针无问题。
+任务 2 功能闭环完整（搜索/筛选/告急/分页/高亮）、API_SPEC 与考核点全部满足、冒烟 22 用例 + 2 个测试类全绿（22 测试）、漏洞思考中分页上限与深分页深度均已兜底、review 确认索引、两步查询与空指针无问题。
 
 ---
 
