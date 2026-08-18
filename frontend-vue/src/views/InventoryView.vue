@@ -84,8 +84,8 @@ const toggleAlarm = () => {
   loadInventory()
 }
 
-/** 库存 < 10 的行红色加粗 */
-const getRowStyle = (row: any): CSSProperties => {
+/** 库存 < 10 的行红色加粗（el-table row-style 回调签名为 ({ row, rowIndex })） */
+const getRowStyle = ({ row }: { row: any }): CSSProperties => {
   if (row.quantity < 10) {
     return { color: '#f56c6c', fontWeight: 'bold' }
   }
