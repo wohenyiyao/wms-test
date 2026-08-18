@@ -177,7 +177,7 @@
 | 设计点 | 方案 |
 |--------|------|
 | 查询实现 | 单条 JPQL：`Inventory JOIN Product JOIN Location JOIN Warehouse`，一次查询返回含商品名/SKU/仓库名的响应（库存表无仓库字段，经 库位编码→库位→仓库 反查） |
-| 筛选 | `keyword` 模糊匹配 商品名称 / SKU / 库位编码 / **仓库名称**（用户拍板：一个输入框覆盖全部）；`warehouseId` 精确筛选仓库 |
+| 筛选 | `keyword` 模糊匹配 商品名称 / SKU / 库位编码（用户拍板：一个输入框覆盖）；`warehouseId` 下拉精确筛选仓库 |
 | 告急筛选（增强） | `lowStockOnly=true` 时仅返回 `quantity < 10`，支撑前端「告急库存提示条」点击切换（API_SPEC 未定义，属用户要求的交互增强） |
 | 分页 | **两步查询**：先查 id 集合（走主键索引零回表，分页+count 在此层）→ 再 `IN` 取详情按 id 重排（回表只发生在要返回的行）；pageSize 上限 100、页码下限 1；**OFFSET 深度上限 10000**（深分页兜底，超限返回 400 提示缩小筛选） |
 | 性能 | join 全部走主键 / 唯一键（`products.id`、`locations.code`、`warehouses.id`）；`warehouseId` 走 `locations.warehouse_id` 外键索引；单查询避免 N+1；`LIKE %kw%` 前导通配无法走索引（测试规模可接受，见 review） |
@@ -186,8 +186,7 @@
 
 | 决策点 | 提出的方案 / 分析 | 候选人的反馈 / 决定 | 最终方案与理由 |
 |--------|------------------|--------------------|----------------|
-| keyword 搜索范围 | API_SPEC 仅定义 商品名称/SKU 模糊；TASKS 另提到库位编码筛选 | 拍板：**名称 + SKU + 库位编码三者都匹配**，一个输入框全覆盖 | JPQL `name/sku/locationCode` 三字段 OR 模糊匹配。理由：实用优先，避免用户来回切换筛选维度 |
-| keyword 搜索范围（迭代） | 按上决策实现为三字段匹配 | 反馈：**查询框还要能按仓库名搜索**（输入"广州"应能搜到该仓库存行） | JPQL 增加 `JOIN Warehouse` + `OR w.name LIKE`，keyword 四字段匹配（名称/SKU/库位/仓库名）。理由：延续"一个框全盖"思路，仓库名是高频筛选维度 |
+| keyword 搜索范围 | API_SPEC 仅定义 商品名称/SKU 模糊；TASKS 另提到库位编码筛选 | 拍板：**名称 + SKU + 库位编码三者都匹配**，一个输入框全覆盖 | JPQL `name/sku/locationCode` 三字段 OR 模糊匹配。理由：实用优先，避免用户来回切换筛选维度。仓库维度走 `warehouseId` 下拉精确筛选（曾尝试把仓库名并入 keyword，确认与下拉功能重复后回退） |
 | 低库存展示 | 方案 A：仅红色文字加粗；方案 B：整行浅红背景 | 提出增强：**红色加粗 + 列表头顶「告急库存」提示条（显示数量），点击后列表只显示告急行** | 前端告急提示条 + 后端 `lowStockOnly` 筛选参数（分页在服务端，前端过滤只对当前页生效不准确，故下沉到 SQL）。理由：告急数准确且可翻页，交互闭环 |
 | 搜索交互 | 方案 A：输入防抖 300ms 自动搜索 + 查询按钮；方案 B：仅按钮 | 选方案 A，并要求**自动搜索时给用户提示**（避免"列表怎么自己变了"的困惑） | 防抖自动搜索 + 完成后轻提示「已按条件自动筛选，共 N 条」（短时长，不刷屏）。理由：体验好且满足防抖考核点 |
 
@@ -219,10 +218,10 @@
 
 | 手段 | 内容 | 结果 |
 |------|------|:---:|
-| `smoke-test.ps1`（接口冒烟，23 用例） | 原 16 用例 + 库存 7 用例（PageResult 结构 / keyword 按 SKU / warehouseId 筛选 / **keyword 按仓库名** / lowStockOnly 告急 / pageSize 上限 / **深分页兜底 400**） | ✅ 全过 |
-| `InventoryQueryServiceTest`（Service 层，7 用例） | 字段完整（含仓库名 join 反查）、keyword 按 SKU/库位筛选、**keyword 按仓库名（WH-A/WH-B 互斥断言）**、warehouseId 筛选、lowStockOnly 只返回 <10、分页 page/pageSize/total、**深分页 offset 超限抛 400（含边界 9900 通过）** | ✅ 全过 |
+| `smoke-test.ps1`（接口冒烟，22 用例） | 原 16 用例 + 库存 6 用例（PageResult 结构 / keyword 按 SKU / warehouseId 筛选 / lowStockOnly 告急 / pageSize 上限 / **深分页兜底 400**） | ✅ 全过 |
+| `InventoryQueryServiceTest`（Service 层，6 用例） | 字段完整（含仓库名 join 反查）、keyword 按 SKU/库位筛选、warehouseId 筛选（WH-A/WH-B 互斥）、lowStockOnly 只返回 <10、分页 page/pageSize/total、**深分页 offset 超限抛 400（含边界 9900 通过）** | ✅ 全过 |
 | `InventoryApiTest`（API 层，7 用例） | 200 + PageResult 结构、keyword 行级断言、warehouseId 仓库名非空、lowStockOnly 每行 <10、pageSize 9999 截断 100、page=0 回退第 1 页、**深分页 400** | ✅ 全过 |
-| `mvn test` 全量 | 23 用例（任务 1 的 9 + 任务 2 的 14） | ✅ 全过 |
+| `mvn test` 全量 | 22 用例（任务 1 的 9 + 任务 2 的 13） | ✅ 全过 |
 
 > 测试数据确定性：Service 测试内新建唯一商品（UUID SKU）并入库，再断言查询行为，不依赖既有库存数据。
 
@@ -267,7 +266,7 @@
 
 ### 4.8 验收结论
 
-任务 2 功能闭环完整（搜索/筛选/告急/分页/高亮）、API_SPEC 与考核点全部满足、冒烟 23 用例 + 2 个测试类全绿（23 测试）、漏洞思考中分页上限与深分页深度均已兜底、review 确认索引、两步查询与空指针无问题。
+任务 2 功能闭环完整（搜索/筛选/告急/分页/高亮）、API_SPEC 与考核点全部满足、冒烟 22 用例 + 2 个测试类全绿（22 测试）、漏洞思考中分页上限与深分页深度均已兜底、review 确认索引、两步查询与空指针无问题。
 
 ---
 
