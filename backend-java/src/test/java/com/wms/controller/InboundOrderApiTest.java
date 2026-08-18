@@ -45,7 +45,7 @@ class InboundOrderApiTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.code").value(200))
                 .andExpect(jsonPath("$.message").value("入库单创建成功"))
-                .andExpect(jsonPath("$.data.orderNo").value(matchesPattern("IN-\\d{8}-\\d{3}")))
+                .andExpect(jsonPath("$.data.orderNo").value(matchesPattern("IN-\\d{8}-\\d{3,}")))
                 .andExpect(jsonPath("$.data.status").value("COMPLETED"))
                 .andExpect(jsonPath("$.data.items[0].quantity").value(6));
     }

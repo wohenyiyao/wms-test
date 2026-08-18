@@ -42,7 +42,7 @@ class InventoryQueryServiceTest {
         inventoryService.createInboundOrder(request("查询测试", item(product.getId(), 5, "WH-A-01-01")));
 
         // when：按新商品 SKU 精确查询（不依赖"第一页包含新行"的假设，与既有数据规模解耦）
-        PageResult<InventoryResponse> result = inventoryService.queryInventory(product.getSku(), null, false, 1, 20);
+        PageResult<InventoryResponse> result = inventoryService.queryInventory(product.getSku(), null, null, false, 1, 20);
 
         // then：返回结构正确，目标行字段完整
         assertEquals(1, result.getTotal(), "SKU 精确匹配应只返回该商品的行");
@@ -65,13 +65,13 @@ class InventoryQueryServiceTest {
                 item(p2.getId(), 4, "WH-A-01-02")));
 
         // when：按 SKU 精确搜索 p1
-        PageResult<InventoryResponse> bySku = inventoryService.queryInventory(p1.getSku(), null, false, 1, 20);
+        PageResult<InventoryResponse> bySku = inventoryService.queryInventory(p1.getSku(), null, null, false, 1, 20);
         // then：只返回 p1 的行
         assertEquals(1, bySku.getTotal(), "SKU 精确匹配应只返回该商品");
         assertEquals(p1.getSku(), bySku.getList().get(0).getSku());
 
         // when：按库位编码搜索 WH-A-01-02
-        PageResult<InventoryResponse> byLoc = inventoryService.queryInventory("WH-A-01-02", null, false, 1, 20);
+        PageResult<InventoryResponse> byLoc = inventoryService.queryInventory("WH-A-01-02", null, null, false, 1, 20);
         // then：所有行库位编码包含该关键字
         assertTrue(byLoc.getTotal() >= 1);
         assertTrue(byLoc.getList().stream().allMatch(r -> r.getLocationCode().contains("WH-A-01-02")));
@@ -87,14 +87,14 @@ class InventoryQueryServiceTest {
                 item(p2.getId(), 6, "WH-B-01-01")));
 
         // when：筛仓库 1（WH-A）
-        PageResult<InventoryResponse> whA = inventoryService.queryInventory(null, 1L, false, 1, 100);
+        PageResult<InventoryResponse> whA = inventoryService.queryInventory(null, 1L, null, false, 1, 100);
         // then：包含 p1 行、不包含 p2 行
         assertTrue(whA.getList().stream().anyMatch(r -> r.getProductId().equals(p1.getId())));
         assertTrue(whA.getList().stream().noneMatch(r -> r.getProductId().equals(p2.getId())),
                 "仓库1 不应包含 WH-B 的行");
 
         // when：筛仓库 2（WH-B）
-        PageResult<InventoryResponse> whB = inventoryService.queryInventory(null, 2L, false, 1, 100);
+        PageResult<InventoryResponse> whB = inventoryService.queryInventory(null, 2L, null, false, 1, 100);
         assertTrue(whB.getList().stream().anyMatch(r -> r.getProductId().equals(p2.getId())));
     }
 
@@ -108,7 +108,7 @@ class InventoryQueryServiceTest {
                 item(p2.getId(), 99, "WH-A-01-02")));
 
         // when：告急筛选
-        PageResult<InventoryResponse> alarm = inventoryService.queryInventory(null, null, true, 1, 100);
+        PageResult<InventoryResponse> alarm = inventoryService.queryInventory(null, null, null, true, 1, 100);
 
         // then：所有行 quantity < 10，且包含 p1 行
         assertTrue(alarm.getTotal() >= 1);
@@ -117,8 +117,27 @@ class InventoryQueryServiceTest {
         assertTrue(alarm.getList().stream().anyMatch(r -> r.getProductId().equals(p1.getId())));
 
         // then：非告急筛选的 total 应不少于告急 total
-        PageResult<InventoryResponse> all = inventoryService.queryInventory(null, null, false, 1, 100);
+        PageResult<InventoryResponse> all = inventoryService.queryInventory(null, null, null, false, 1, 100);
         assertTrue(all.getTotal() >= alarm.getTotal());
+    }
+
+    @Test
+    void queryInventory_productId_shouldFilterByProduct() {
+        // given：两个商品各入一行
+        Product p1 = saveProduct(tag());
+        Product p2 = saveProduct(tag());
+        inventoryService.createInboundOrder(request("查询测试",
+                item(p1.getId(), 3, "WH-A-01-01"),
+                item(p2.getId(), 4, "WH-A-01-02")));
+
+        // when：按 productId 精确过滤 p1（选做A：出库页展示某商品可用库存）
+        PageResult<InventoryResponse> result = inventoryService.queryInventory(null, null, p1.getId(), false, 1, 100);
+
+        // then：只返回 p1 的行
+        assertTrue(result.getTotal() >= 1);
+        assertTrue(result.getList().stream().allMatch(r -> r.getProductId().equals(p1.getId())),
+                "productId 过滤应只返回该商品的行");
+        assertTrue(result.getList().stream().noneMatch(r -> r.getProductId().equals(p2.getId())));
     }
 
     @Test
@@ -130,14 +149,14 @@ class InventoryQueryServiceTest {
         }
 
         // when：pageSize=2 取第一页
-        PageResult<InventoryResponse> page1 = inventoryService.queryInventory(null, null, false, 1, 2);
+        PageResult<InventoryResponse> page1 = inventoryService.queryInventory(null, null, null, false, 1, 2);
         assertEquals(2, page1.getList().size(), "第一页应返回 2 行");
         assertTrue(page1.getTotal() >= 3);
         assertEquals(1, page1.getPage());
         assertEquals(2, page1.getPageSize());
 
         // when：第二页
-        PageResult<InventoryResponse> page2 = inventoryService.queryInventory(null, null, false, 2, 2);
+        PageResult<InventoryResponse> page2 = inventoryService.queryInventory(null, null, null, false, 2, 2);
         assertTrue(page2.getList().size() >= 1);
         assertTrue(page2.getList().size() <= 2);
     }
@@ -146,11 +165,11 @@ class InventoryQueryServiceTest {
     void queryInventory_deepOffset_shouldThrowBusinessException400() {
         // 深分页兜底：offset = (page-1)*pageSize = 199*100 = 19900 > 10000 → 拒绝
         BusinessException ex = assertThrows(BusinessException.class,
-                () -> inventoryService.queryInventory(null, null, false, 200, 100));
+                () -> inventoryService.queryInventory(null, null, null, false, 200, 100));
         assertEquals(400, ex.getCode(), "深分页应返回业务码 400");
 
         // 边界：offset = 99*100 = 9900 ≤ 10000 → 允许（正常返回）
-        PageResult<InventoryResponse> ok = inventoryService.queryInventory(null, null, false, 100, 100);
+        PageResult<InventoryResponse> ok = inventoryService.queryInventory(null, null, null, false, 100, 100);
         assertNotNull(ok);
         assertTrue(ok.getTotal() >= 0);
     }

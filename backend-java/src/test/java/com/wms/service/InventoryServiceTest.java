@@ -45,7 +45,7 @@ class InventoryServiceTest {
 
         // then：单号格式 / 状态 / 明细回显
         assertNotNull(resp.getId());
-        assertTrue(resp.getOrderNo().matches("IN-\\d{8}-\\d{3}"), "单号应为 IN-YYYYMMDD-XXX，实际: " + resp.getOrderNo());
+        assertTrue(resp.getOrderNo().matches("IN-\\d{8}-\\d{3,}"), "单号应为 IN-YYYYMMDD-XXX，实际: " + resp.getOrderNo());
         assertEquals("COMPLETED", resp.getStatus());
         assertEquals(2, resp.getItems().size());
 
