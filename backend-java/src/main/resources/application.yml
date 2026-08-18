@@ -29,7 +29,7 @@ spring:
       hibernate:
         format_sql: true
 
-  # Redis（选做A：出库库存 Lua 原子预扣门控；本机 E:\redis 启动，无密码）
+  # Redis（选做A：出库库存 Lua 原子预扣门控）
   data:
     redis:
       host: localhost

@@ -80,7 +80,6 @@
 
 - **工具**：DeepSeek Harness 编码智能体（deepseek-v4-flash 模型），以对话方式辅助编码。
 - **协作方式**：理解需求后，**先与用户确认设计方案、听取用户建议**，确认后再让 AI 按模板风格生成初版实现 → 人工审查事务边界、参数校验与边界条件 → 用测试验证 → 发现问题反馈 AI 协助排查。
-- **具体例子（AI 生成代码的问题与修复）**：实现入库单时，为支持 Service 跨包引用，把 DTO 中的明细类 `InboundItemRequest` 由包级私有改为 `public`，结果编译报「InboundItemRequest 不是公共的」，且**所有 Lombok 生成的方法（builder/getter/log/构造器）一并消失**。定位根因：该类是 `InboundOrderCreateRequest.java` 中的**第二个 public 顶层类**——Java 规定一个文件只能有一个 public 顶层类且须与文件名一致（包级私有则合法），javac 因该结构错误中止注解处理，导致 Lombok 全局失效。修复：拆分为独立文件 `InboundItemRequest.java`。教训：改动类可见性必须同步考虑 Java 文件结构约束；排查「注解处理未生效」应先确认是否存在结构级错误。
 - **AI 使用边界**：所有 AI 产物都经过人工 review 与测试验证后才提交。
 
 ---
