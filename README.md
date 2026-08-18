@@ -25,21 +25,12 @@
 
 ### 1. 初始化数据库（可选）
 
-首次运行或想重置为正式种子数据时执行（都会**清空业务表并写入种子数据**：15 商品 / 3 仓库 / 10 库位 / 19 库存行，含历史订单示例）。两种方式任选：
-
-**方式一：初始化脚本（推荐，自动建库）**
-
-```bash
-powershell -ExecutionPolicy Bypass -File db/init-db.ps1
-# 可指定连接参数：-DbHost 127.0.0.1 -User root -Password root -Database wms-test
-```
-
-**方式二：纯命令行执行 `db/seed.sql`**
+首次运行或想重置为正式种子数据时，执行 `db/seed.sql`（清空业务表 + 写入种子数据：15 商品 / 3 仓库 / 10 库位 / 19 库存行，含历史订单示例）：
 
 ```bash
 # 若库不存在先创建：
 mysql -uroot -p -e "CREATE DATABASE wms-test DEFAULT CHARACTER SET utf8mb4"
-# 执行种子数据（清空 + 写入）：
+# 执行种子数据：
 mysql --default-character-set=utf8mb4 -uroot -p wms-test -e "source db/seed.sql"
 ```
 
