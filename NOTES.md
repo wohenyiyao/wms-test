@@ -163,11 +163,114 @@
 
 ---
 
-## 4. 任务进度总览
+## 4. 任务 2：库存查询（已完成）
+
+### 4.1 需求理解
+
+- **业务**：仓库管理员查看各库位实时库存，支持筛选与分页。
+- **接口契约**（API_SPEC 4）：`GET /api/inventory?keyword=&warehouseId=&page=&pageSize=`，返回 `PageResult`（商品名/SKU/库位/仓库名/数量/更新时间）。
+- **前端**：搜索栏（商品名/SKU 模糊 + 仓库下拉）、表格分页、**库存 < 10 红色高亮**。
+- **考核点**：SQL 索引使用、分页正确性、前端状态管理、搜索防抖。
+
+### 4.2 设计
+
+| 设计点 | 方案 |
+|--------|------|
+| 查询实现 | 单条 JPQL：`Inventory JOIN Product JOIN Location JOIN Warehouse`，一次查询返回含商品名/SKU/仓库名的响应（库存表无仓库字段，经 库位编码→库位→仓库 反查） |
+| 筛选 | `keyword` 模糊匹配 商品名称 / SKU / 库位编码（用户拍板：一个输入框覆盖三者）；`warehouseId` 精确筛选仓库 |
+| 告急筛选（增强） | `lowStockOnly=true` 时仅返回 `quantity < 10`，支撑前端「告急库存提示条」点击切换（API_SPEC 未定义，属用户要求的交互增强） |
+| 分页 | Spring Data `Pageable` 自动 count；pageSize 上限 100、页码下限 1（沿用可用性兜底） |
+| 性能 | join 全部走主键 / 唯一键（`products.id`、`locations.code`、`warehouses.id`）；`warehouseId` 走 `locations.warehouse_id` 外键索引；单查询避免 N+1；`LIKE %kw%` 前导通配无法走索引（测试规模可接受，见 review） |
+
+### 4.2.1 设计沟通记录（人主导决策，AI 提供分析并执行）
+
+| 决策点 | 提出的方案 / 分析 | 候选人的反馈 / 决定 | 最终方案与理由 |
+|--------|------------------|--------------------|----------------|
+| keyword 搜索范围 | API_SPEC 仅定义 商品名称/SKU 模糊；TASKS 另提到库位编码筛选 | 拍板：**名称 + SKU + 库位编码三者都匹配**，一个输入框全覆盖 | JPQL `name/sku/locationCode` 三字段 OR 模糊匹配。理由：实用优先，避免用户来回切换筛选维度 |
+| 低库存展示 | 方案 A：仅红色文字加粗；方案 B：整行浅红背景 | 提出增强：**红色加粗 + 列表头顶「告急库存」提示条（显示数量），点击后列表只显示告急行** | 前端告急提示条 + 后端 `lowStockOnly` 筛选参数（分页在服务端，前端过滤只对当前页生效不准确，故下沉到 SQL）。理由：告急数准确且可翻页，交互闭环 |
+| 搜索交互 | 方案 A：输入防抖 300ms 自动搜索 + 查询按钮；方案 B：仅按钮 | 选方案 A，并要求**自动搜索时给用户提示**（避免"列表怎么自己变了"的困惑） | 防抖自动搜索 + 完成后轻提示「已按条件自动筛选，共 N 条」（短时长，不刷屏）。理由：体验好且满足防抖考核点 |
+
+### 4.3 实现（文件清单）
+
+| 文件 | 说明 |
+|------|------|
+| `repository/InventoryRepository.java` | 新增 `searchInventory`：单条 JPQL（join 商品/库位/仓库 + keyword/warehouseId/lowStockOnly 筛选 + Pageable 分页） |
+| `service/InventoryService.java` | 实现 `queryInventory(keyword, warehouseId, lowStockOnly, page, pageSize)` → `PageResult<InventoryResponse>`（blank→null 归一） |
+| `controller/InventoryController.java` | `GET /api/inventory` 接入 service，pageSize 上限 100、页码下限 1 |
+| `dto/InventoryResponse.java` | 模板已提供（未改） |
+| `views/InventoryView.vue` | 完整实现：搜索栏（防抖自动搜索 + 查询按钮 + 仓库下拉级联刷新）、告急提示条（点击切换 lowStockOnly）、quantity<10 红色加粗、分页、空态、自动搜索轻提示 |
+| `api/index.ts` | `getInventory` 增加 `lowStockOnly` 参数 |
+
+### 4.4 对照文档验收
+
+| TASKS.md / API_SPEC 要求 | 实现 | 满足 |
+|------|------|:---:|
+| 按商品名称/SKU/库位筛选（keyword） | JPQL 三字段 OR 模糊匹配 | ✅ |
+| 按仓库筛选（warehouseId） | `l.warehouseId = :warehouseId` | ✅ |
+| 分页 page/pageSize（默认 1/20，最大 100） | `Pageable` + count，pageSize 上限 100 | ✅ |
+| 返回 商品名/SKU/库位/仓库名/数量/更新时间 | `InventoryResponse` join 三表 | ✅ |
+| 避免全表扫描 | join 走主键/唯一键 + 外键索引，单查询无 N+1 | ✅ |
+| 前端搜索栏 + 表格 + 分页 | `InventoryView.vue` | ✅ |
+| 库存 < 10 红色高亮 | `row-style` 红色加粗 | ✅ |
+| 搜索防抖 | 300ms 防抖自动搜索 + 提示 | ✅ |
+
+### 4.5 冒烟测试
+
+| 手段 | 内容 | 结果 |
+|------|------|:---:|
+| `smoke-test.ps1`（接口冒烟，21 用例） | 原 16 用例 + 库存 5 用例（PageResult 结构 / keyword 筛选 / warehouseId 筛选 / lowStockOnly 告急 / pageSize 上限） | ✅ 全过 |
+| `InventoryQueryServiceTest`（Service 层，5 用例） | 字段完整（含仓库名 join 反查）、keyword 按 SKU/库位筛选、warehouseId 筛选（WH-A/WH-B 互斥）、lowStockOnly 只返回 <10、分页 page/pageSize/total | ✅ 全过 |
+| `InventoryApiTest`（API 层，6 用例） | 200 + PageResult 结构、keyword 行级断言、warehouseId 仓库名非空、lowStockOnly 每行 <10、pageSize 9999 截断 100、page=0 回退第 1 页 | ✅ 全过 |
+| `mvn test` 全量 | 20 用例（任务 1 的 9 + 任务 2 的 11） | ✅ 全过 |
+
+> 测试数据确定性：Service 测试内新建唯一商品（UUID SKU）并入库，再断言查询行为，不依赖既有库存数据。
+
+### 4.6 漏洞思考（按固定 8 项清单逐项审视）
+
+| # | 风险 | 场景 | 影响 | 处置 |
+|---|------|------|:---:|------|
+| 1 | SQL 注入 | keyword 等输入拼接 | 无 | 已免疫：全部 JPA 命名参数（`:keyword` 等），无字符串拼接（记录） |
+| 8 | 分页无上限 | 传超大 pageSize → 全表拉取拖垮 DB | 🟡 中 | **已修复**：pageSize 上限 100 + 页码下限 1（API 层 + Service 层双重防御，测试回归） |
+| 4 | keyword 超长 | 超长模糊串 → 查询开销 | 🟡 低 | 接受：查询接口参数无长度限制；测试规模影响可忽略，若上线可加 `@Size`（记录） |
+| 5 | 重复提交 | 查询为只读 GET | 无 | 天然幂等（记录） |
+| 6 | 并发 | 查询无写操作 | 无 | 只读，无竞态（记录） |
+| 7 | XSS | 商品名等回显 | 无 | 已免疫：Vue 模板默认转义（记录） |
+| 2 | 认证 / 越权 | 系统无登录体系 | 🟡 中 | 接受：API_SPEC 未定义认证，测试范围外；引入登录时必检（记录） |
+| 3 | 敏感信息 | 响应字段泄露 | 无 | 响应仅业务字段，无堆栈/配置泄露（记录） |
+| 8 | 查询超时无限制 | 慢查询拖线程 | 低 | 接受：查询走索引 + 分页上限，测试规模无慢查询；生产可配连接/语句超时（记录） |
+
+**结论**：按固定 8 项清单审视 —— 分页上限已修复兜底并有回归；注入、XSS、幂等、并发天然免疫；认证、keyword 长度、超时等为范围外或可接受边界（已记录）。
+
+### 4.7 代码 Review（四个角度）
+
+**① 事务安全**
+- 查询接口只读，无事务写操作；`PageResult` 组装无状态，无部分成功问题。
+
+**② SQL 性能**
+- 单条 JPQL 一次 join 三表，避免「列表查询 + 逐行反查商品/仓库」的 N+1；
+- join 走 `products.id`（主键）、`locations.code`（唯一索引）、`warehouses.id`（主键）；`warehouseId` 筛选走 `locations.warehouse_id` 外键索引；
+- 分页由 Spring Data 自动生成 count 查询（轻量）；
+- 已知边界：`LIKE '%kw%'` 前导通配无法走索引，但 keyword 命中 name/sku/locationCode 三列，数据量为测试规模，可接受；生产可考虑全文索引或前缀匹配。
+
+**③ 空指针风险**
+- `keyword`/`warehouseId` 可空：Service 层 blank→null 归一，JPQL `:param IS NULL` 短路，无 NPE；
+- `lowStockOnly` 布尔参数有默认值，不会为 null；
+- `InventoryResponse` 由 JPQL `new` 表达式构造，字段来源均有 join 保证非空（quantity 为 `Integer`，DB 列 NOT NULL）。
+
+**④ 并发问题**
+- 查询无写操作，无竞态；不引入共享可变状态（前端防抖 timer 为组件内局部变量，卸载即失效）。
+
+### 4.8 验收结论
+
+任务 2 功能闭环完整（搜索/筛选/告急/分页/高亮）、API_SPEC 与考核点全部满足、冒烟 21 用例 + 2 个测试类全绿（20 测试）、漏洞思考中分页上限已兜底、review 确认索引与空指针无问题。
+
+---
+
+## 5. 任务进度总览
 
 | 任务 | 状态 |
 |------|:---:|
 | 必做 1：入库单创建 | ✅ 完成（含测试与 review） |
-| 必做 2：库存查询 | ⬜ 待做 |
+| 必做 2：库存查询 | ✅ 完成（含测试与 review） |
 | 必做 3：修复 2 个预埋 Bug | ⬜ 待做 |
 | 选做 A/B/C | ⬜ 待做（完成后按同一流程记录） |
