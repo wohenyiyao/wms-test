@@ -248,9 +248,11 @@
 
 **② SQL 性能**
 - 单条 JPQL 一次 join 三表，避免「列表查询 + 逐行反查商品/仓库」的 N+1；
-- join 走 `products.id`（主键）、`locations.code`（唯一索引）、`warehouses.id`（主键）；`warehouseId` 筛选走 `locations.warehouse_id` 外键索引；
+- **筛选字段索引**（本轮补齐）：`inventory.location_code`（`idx_inventory_location_code`）、`products.name`（`idx_products_name`），均由 JPA `@Table(indexes=...)` 注解声明、`ddl-auto=update` 自动建索引；`warehouseId` 筛选走 `locations.warehouse_id` 外键索引（MySQL 对 FK 列自动建索引，已存在）；
 - 分页由 Spring Data 自动生成 count 查询（轻量）；
-- 已知边界：`LIKE '%kw%'` 前导通配无法走索引，但 keyword 命中 name/sku/locationCode 三列，数据量为测试规模，可接受；生产可考虑全文索引或前缀匹配。
+- **EXPLAIN 验证**：查询计划的 `possible_keys` 已包含 `idx_inventory_location_code`、`warehouse_id` 等索引（当前仅 8 行库存，优化器按成本选全表扫描属正常；数据量上来后自动走索引）；
+- **顺带清理冗余索引**：inventory 表存在两个完全相同的唯一索引（模板 SQL 的 `uk_product_location` 与 Hibernate 按实体注解生成的 `UK3kq...`）——删除模板 SQL 建的冗余索引，避免写放大与空间浪费；
+- 已知边界：`LIKE '%kw%'` 前导通配无法走索引（B-tree 仅支持等值/前缀匹配），keyword 命中 name/sku/locationCode 三列，测试规模可接受；生产可考虑全文索引（`FULLTEXT`）或前缀匹配改造。
 
 **③ 空指针风险**
 - `keyword`/`warehouseId` 可空：Service 层 blank→null 归一，JPQL `:param IS NULL` 短路，无 NPE；
