@@ -1,2 +1,0 @@
-# WMS Backend - FastAPI
-
