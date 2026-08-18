@@ -15,6 +15,7 @@
 import { ref, watch, onMounted, type CSSProperties } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getInventory, getWarehouses, type Warehouse, type InventoryItem } from '@/api'
+import { buildInventoryQuery, debounce } from '@/utils/filters'
 import PageCard from '@/components/PageCard.vue'
 
 const keyword = ref('')
@@ -30,23 +31,21 @@ const warehouses = ref<Warehouse[]>([])
 /** 告急库存数量（非告急模式=全局告急数；告急模式=当前筛选结果数） */
 const alarmCount = ref(0)
 
-/** 搜索防抖 timer */
-let searchTimer: number | undefined
+/** 搜索防抖（300ms，停止输入后自动搜索；逻辑抽取于 @/utils/filters 便于单测） */
+const search = debounce(() => {
+  page.value = 1
+  loadInventory(true)
+}, 300)
 
 const loadInventory = async (autoHint = false) => {
   loading.value = true
   try {
-    const base = {
-      keyword: keyword.value.trim() || undefined,
-      warehouseId: warehouseId.value,
-      page: page.value,
-      pageSize: pageSize.value,
-    }
-    const listP = getInventory({ ...base, lowStockOnly: lowStockOnly.value })
+    const query = buildInventoryQuery(keyword.value, warehouseId.value, lowStockOnly.value, page.value, pageSize.value)
+    const listP = getInventory(query)
     // 非告急模式时并行取一次告急总数（轻量 count，pageSize=1 只取 total）
     const alarmP = lowStockOnly.value
       ? Promise.resolve(null)
-      : getInventory({ ...base, lowStockOnly: true, page: 1, pageSize: 1 })
+      : getInventory({ ...query, lowStockOnly: true, page: 1, pageSize: 1 })
     const [listRes, alarmRes] = await Promise.all([listP, alarmP])
     inventoryList.value = listRes.data.list
     total.value = listRes.data.total
@@ -61,18 +60,9 @@ const loadInventory = async (autoHint = false) => {
   }
 }
 
-/** 输入防抖自动搜索：停止输入 300ms 后自动刷新（并回到第 1 页） */
-const debouncedAutoSearch = () => {
-  if (searchTimer) clearTimeout(searchTimer)
-  searchTimer = window.setTimeout(() => {
-    page.value = 1
-    loadInventory(true)
-  }, 300)
-}
-
-/** 手动查询：立即搜索（取消未触发的防抖） */
+/** 手动查询：取消未触发的防抖后立即搜索 */
 const manualSearch = () => {
-  if (searchTimer) clearTimeout(searchTimer)
+  search.cancel()
   page.value = 1
   loadInventory()
 }
@@ -95,7 +85,7 @@ const getRowStyle = ({ row }: { row: any }): CSSProperties => {
 /** 后端 ISO 时间转展示格式 */
 const formatTime = (s?: string) => (s ? s.replace('T', ' ').substring(0, 19) : '-')
 
-watch(keyword, debouncedAutoSearch)
+watch(keyword, search.run)
 watch(warehouseId, () => {
   page.value = 1
   loadInventory()
