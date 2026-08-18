@@ -30,7 +30,7 @@ public interface InventoryRepository extends JpaRepository<Inventory, Long> {
 
     /**
      * 第一步：分页查满足筛选条件的库存行 id（只返回主键，无回表）。
-     * - keyword 模糊匹配：商品名称 / SKU / 库位编码 / 仓库名称
+     * - keyword 模糊匹配：商品名称 / SKU / 库位编码（仓库筛选走 warehouseId 下拉）
      * - warehouseId 精确匹配仓库（空则不过滤）
      * - lowStockOnly=true 时仅返回 quantity < 10 的告急库存
      * 分页 + count 由 Spring Data 自动完成；排序必须稳定（按主键 id）。
@@ -39,12 +39,10 @@ public interface InventoryRepository extends JpaRepository<Inventory, Long> {
             SELECT i.id FROM Inventory i
             JOIN Product p ON p.id = i.productId
             JOIN Location l ON l.code = i.locationCode
-            JOIN Warehouse w ON w.id = l.warehouseId
             WHERE (:keyword IS NULL OR :keyword = ''
                    OR p.name LIKE CONCAT('%', :keyword, '%')
                    OR p.sku LIKE CONCAT('%', :keyword, '%')
-                   OR i.locationCode LIKE CONCAT('%', :keyword, '%')
-                   OR w.name LIKE CONCAT('%', :keyword, '%'))
+                   OR i.locationCode LIKE CONCAT('%', :keyword, '%'))
               AND (:warehouseId IS NULL OR l.warehouseId = :warehouseId)
               AND (:lowStockOnly = FALSE OR i.quantity < 10)
             """)

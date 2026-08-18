@@ -6,9 +6,7 @@ import com.wms.dto.InboundItemRequest;
 import com.wms.dto.InboundOrderCreateRequest;
 import com.wms.dto.InventoryResponse;
 import com.wms.entity.Product;
-import com.wms.entity.Warehouse;
 import com.wms.repository.ProductRepository;
-import com.wms.repository.WarehouseRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -36,9 +34,6 @@ class InventoryQueryServiceTest {
     @Autowired
     private ProductRepository productRepository;
 
-    @Autowired
-    private WarehouseRepository warehouseRepository;
-
     @Test
     void queryInventory_shouldReturnRowsWithFullFields() {
         // given：新建唯一商品并入库 5 件到 WH-A-01-01（新商品在该库位必为新行，quantity 确定=5）
@@ -46,16 +41,12 @@ class InventoryQueryServiceTest {
         Product product = saveProduct(tag);
         inventoryService.createInboundOrder(request("查询测试", item(product.getId(), 5, "WH-A-01-01")));
 
-        // when：无条件查询
-        PageResult<InventoryResponse> result = inventoryService.queryInventory(null, null, false, 1, 20);
+        // when：按新商品 SKU 精确查询（不依赖"第一页包含新行"的假设，与既有数据规模解耦）
+        PageResult<InventoryResponse> result = inventoryService.queryInventory(product.getSku(), null, false, 1, 20);
 
         // then：返回结构正确，目标行字段完整
-        assertTrue(result.getTotal() >= 1);
-        InventoryResponse row = result.getList().stream()
-                .filter(r -> r.getProductId().equals(product.getId()))
-                .findFirst()
-                .orElse(null);
-        assertNotNull(row, "应包含刚入库的商品行");
+        assertEquals(1, result.getTotal(), "SKU 精确匹配应只返回该商品的行");
+        InventoryResponse row = result.getList().get(0);
         assertEquals("SKU-" + tag, row.getSku());
         assertNotNull(row.getProductName());
         assertNotNull(row.getWarehouseName(), "仓库名应通过 库位->仓库 join 反查出来");
@@ -162,27 +153,6 @@ class InventoryQueryServiceTest {
         PageResult<InventoryResponse> ok = inventoryService.queryInventory(null, null, false, 100, 100);
         assertNotNull(ok);
         assertTrue(ok.getTotal() >= 0);
-    }
-
-    @Test
-    void queryInventory_keyword_shouldMatchWarehouseName() {
-        // given：p1 入 WH-A（仓库 1），p2 入 WH-B（仓库 2）
-        Product p1 = saveProduct(tag());
-        Product p2 = saveProduct(tag());
-        inventoryService.createInboundOrder(request("查询测试",
-                item(p1.getId(), 2, "WH-A-01-01"),
-                item(p2.getId(), 6, "WH-B-01-01")));
-        String whAName = warehouseRepository.findById(1L).map(Warehouse::getName).orElseThrow();
-
-        // when：按仓库名称搜索
-        PageResult<InventoryResponse> byWhName = inventoryService.queryInventory(whAName, null, false, 1, 100);
-
-        // then：只返回 WH-A 的行（仓库名精确匹配）
-        assertTrue(byWhName.getTotal() >= 1);
-        assertTrue(byWhName.getList().stream().anyMatch(r -> r.getProductId().equals(p1.getId())));
-        assertTrue(byWhName.getList().stream().noneMatch(r -> r.getProductId().equals(p2.getId())),
-                "按仓库名搜索不应返回其他仓库的行");
-        assertTrue(byWhName.getList().stream().allMatch(r -> whAName.equals(r.getWarehouseName())));
     }
 
     // ---------- helpers ----------
