@@ -54,7 +54,12 @@ const tableData = computed<Array<InboundItemRow | typeof DRAFT_MARKER>>(() => {
   if (editingIndex.value === -1) list.push(DRAFT_MARKER)
   return list
 })
-const isDraftRow = (row: any): boolean => row === DRAFT_MARKER
+/**
+ * 判断是否为编辑行：用标记字段而非引用比较。
+ * 行对象可能被 Vue 响应式代理 / el-table 内部包装，引用比较会失效，
+ * 导致编辑行被当成普通行渲染（表现：新增后无法填入信息）。
+ */
+const isDraftRow = (row: any): boolean => !!row && row.__draft === true
 
 /**
  * 幂等键：本次表单会话的 UUID。
@@ -340,6 +345,7 @@ const handleSubmit = async () => {
             filterable
             placeholder="搜索选择商品"
             style="width: 100%"
+            :teleported="true"
           >
             <el-option
               v-for="p in products"
@@ -358,6 +364,7 @@ const handleSubmit = async () => {
             v-model="draft.warehouseId"
             placeholder="选择仓库"
             style="width: 100%"
+            :teleported="true"
             @change="handleWarehouseChange"
           >
             <el-option v-for="w in warehouses" :key="w.id" :label="w.name" :value="w.id" />
@@ -372,6 +379,7 @@ const handleSubmit = async () => {
             v-model="draft.locationCode"
             placeholder="选择库位"
             style="width: 100%"
+            :teleported="true"
             :loading="!!draft.warehouseId && locationLoading[draft.warehouseId]"
             :disabled="!draft.warehouseId"
           >
