@@ -64,6 +64,7 @@ export interface InventoryItem {
 export const getInventory = (params: {
   keyword?: string
   warehouseId?: number
+  lowStockOnly?: boolean
   page?: number
   pageSize?: number
 }) =>
