@@ -216,6 +216,49 @@ Test-Case 'POST missing items field -> code=400' {
 }
 
 # ---------------------------------------------------------------------
+# 5. GET /api/inventory (Task 2) - inventory query
+# ---------------------------------------------------------------------
+Test-Case 'GET /api/inventory -> 200, PageResult structure' {
+    $r = Invoke-Api GET '/api/inventory?page=1&pageSize=5'
+    Assert-True ($r.Status -eq 200) "HTTP status = $($r.Status), expected 200"
+    Assert-True ($r.Json.code -eq 200) "body.code = $($r.Json.code), expected 200"
+    Assert-True ($null -ne $r.Json.data.list) 'data.list missing'
+    Assert-True ($null -ne $r.Json.data.total) 'data.total missing'
+    Assert-True ($r.Json.data.list.Count -le 5) "pageSize violated: got $($r.Json.data.list.Count)"
+}
+
+Test-Case 'GET /api/inventory?keyword=SKU-001 -> all rows match sku' {
+    $r = Invoke-Api GET '/api/inventory?keyword=SKU-001'
+    Assert-True ($r.Status -eq 200) "HTTP status = $($r.Status)"
+    foreach ($row in $r.Json.data.list) {
+        Assert-True ($row.sku -like '*SKU-001*') "row sku = $($row.sku), expected contains SKU-001"
+    }
+}
+
+Test-Case 'GET /api/inventory?warehouseId=1 -> rows with warehouseName (WH-A)' {
+    $r = Invoke-Api GET '/api/inventory?warehouseId=1'
+    Assert-True ($r.Status -eq 200) "HTTP status = $($r.Status)"
+    Assert-True ($r.Json.data.total -ge 1) 'warehouse 1 should have inventory rows'
+    foreach ($row in $r.Json.data.list) {
+        Assert-True ($row.warehouseName.Length -gt 0) 'warehouseName empty (join failed)'
+    }
+}
+
+Test-Case 'GET /api/inventory?lowStockOnly=true -> all rows quantity<10' {
+    $r = Invoke-Api GET '/api/inventory?lowStockOnly=true'
+    Assert-True ($r.Status -eq 200) "HTTP status = $($r.Status)"
+    foreach ($row in $r.Json.data.list) {
+        Assert-True ($row.quantity -lt 10) "quantity = $($row.quantity), expected < 10"
+    }
+}
+
+Test-Case 'GET /api/inventory?pageSize=9999 -> capped to 100 (availability)' {
+    $r = Invoke-Api GET '/api/inventory?page=1&pageSize=9999'
+    Assert-True ($r.Status -eq 200) "HTTP status = $($r.Status)"
+    Assert-True ($r.Json.data.list.Count -le 100) "pageSize cap violated: got $($r.Json.data.list.Count)"
+}
+
+# ---------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------
 Write-Host ""
