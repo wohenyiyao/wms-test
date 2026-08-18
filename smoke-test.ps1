@@ -258,6 +258,13 @@ Test-Case 'GET /api/inventory?pageSize=9999 -> capped to 100 (availability)' {
     Assert-True ($r.Json.data.list.Count -le 100) "pageSize cap violated: got $($r.Json.data.list.Count)"
 }
 
+Test-Case 'GET /api/inventory deep offset (page=200&pageSize=100) -> code=400 (deep pagination guard)' {
+    $r = Invoke-Api GET '/api/inventory?page=200&pageSize=100'
+    Assert-True ($r.Status -eq 400) "HTTP status = $($r.Status), expected 400"
+    Assert-True ($r.Json.code -eq 400) "body.code = $($r.Json.code), expected 400, raw=$($r.Raw)"
+    Assert-True ($r.Json.message.Length -gt 0) 'error message empty'
+}
+
 # ---------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------

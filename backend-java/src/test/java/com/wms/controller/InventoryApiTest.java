@@ -80,4 +80,13 @@ class InventoryApiTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.page").value(1));
     }
+
+    @Test
+    void getInventory_deepOffset_shouldReturn400() throws Exception {
+        // 深分页兜底：offset = 199*100 = 19900 > 10000 → 业务码 400，提示缩小筛选范围
+        mockMvc.perform(get("/api/inventory").param("page", "200").param("pageSize", "100"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(400))
+                .andExpect(jsonPath("$.message").exists());
+    }
 }

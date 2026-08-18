@@ -1,5 +1,6 @@
 package com.wms.service;
 
+import com.wms.common.BusinessException;
 import com.wms.common.PageResult;
 import com.wms.dto.InboundItemRequest;
 import com.wms.dto.InboundOrderCreateRequest;
@@ -143,6 +144,19 @@ class InventoryQueryServiceTest {
         PageResult<InventoryResponse> page2 = inventoryService.queryInventory(null, null, false, 2, 2);
         assertTrue(page2.getList().size() >= 1);
         assertTrue(page2.getList().size() <= 2);
+    }
+
+    @Test
+    void queryInventory_deepOffset_shouldThrowBusinessException400() {
+        // 深分页兜底：offset = (page-1)*pageSize = 199*100 = 19900 > 10000 → 拒绝
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> inventoryService.queryInventory(null, null, false, 200, 100));
+        assertEquals(400, ex.getCode(), "深分页应返回业务码 400");
+
+        // 边界：offset = 99*100 = 9900 ≤ 10000 → 允许（正常返回）
+        PageResult<InventoryResponse> ok = inventoryService.queryInventory(null, null, false, 100, 100);
+        assertNotNull(ok);
+        assertTrue(ok.getTotal() >= 0);
     }
 
     // ---------- helpers ----------

@@ -15,6 +15,8 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 public class InventoryResponse {
+    /** 库存行 id（自增主键，用于分页第二步按 id 重排 / 游标分页演进） */
+    private Long inventoryId;
     private Long productId;
     private String productName;
     private String sku;

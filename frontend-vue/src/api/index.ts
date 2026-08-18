@@ -52,6 +52,7 @@ export const getLocations = (warehouseId: number) =>
 // ============ 库存查询（候选人实现） ============
 
 export interface InventoryItem {
+  inventoryId: number
   productId: number
   productName: string
   sku: string

@@ -19,6 +19,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,6 +27,8 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * ============================================
@@ -37,6 +40,9 @@ import java.util.List;
 @Service
 @RequiredArgsConstructor
 public class InventoryService {
+
+    /** 深分页兜底：允许的最大 OFFSET（行数）。超过则拒绝查询，防止页码无限增大导致全表扫描 */
+    private static final long MAX_OFFSET = 10_000L;
 
     private final InventoryRepository inventoryRepository;
     private final InboundOrderRepository inboundOrderRepository;
@@ -173,18 +179,39 @@ public class InventoryService {
      * 库存查询 — 任务2
      *
      * 按 商品名称/SKU/库位编码 模糊搜索 + 仓库筛选 + 告急筛选 + 分页。
-     * 由 Repository 单条 JPQL 完成 join 与筛选（见 InventoryRepository#searchInventory），
-     * 分页由 Spring Data 自动 count，避免全表拉取。
+     * 分页采用「两步查询」优化（先查 id 集合、再 IN 取详情），配合 OFFSET 深度上限，
+     * 避免深分页全量回表（详见 InventoryRepository 注释）。
+     *
+     * @throws BusinessException 400 查询深度超过上限（深分页兜底：数据量大时应缩小筛选范围）
      */
+    @Transactional(readOnly = true)
     public PageResult<InventoryResponse> queryInventory(String keyword, Long warehouseId,
                                                         boolean lowStockOnly,
                                                         int page, int pageSize) {
+        // 深分页兜底：OFFSET 深度上限，防止页码无限增大导致全表扫描
+        long offset = (long) (page - 1) * pageSize;
+        if (offset > MAX_OFFSET) {
+            throw new BusinessException(400,
+                    "查询深度超过上限（" + MAX_OFFSET + " 行），请使用筛选条件缩小数据范围");
+        }
+
         String safeKeyword = (keyword == null || keyword.isBlank()) ? null : keyword.trim();
-        Page<InventoryResponse> result = inventoryRepository.searchInventory(
-                safeKeyword,
-                warehouseId,
-                lowStockOnly,
-                PageRequest.of(Math.max(page - 1, 0), pageSize));
-        return new PageResult<>(result.getContent(), result.getTotalElements(), page, pageSize);
+
+        // 第一步：只查 id 集合（分页 + count 走主键/筛选索引，零回表）
+        Page<Long> ids = inventoryRepository.findIdsByFilters(
+                safeKeyword, warehouseId, lowStockOnly,
+                PageRequest.of(Math.max(page - 1, 0), pageSize, Sort.by("id")));
+
+        // 第二步：按 id 集合查完整明细，并按第一步的 id 顺序重排
+        List<InventoryResponse> details = ids.isEmpty()
+                ? List.of()
+                : inventoryRepository.findDetailsByIds(ids.getContent());
+        Map<Long, InventoryResponse> byId = details.stream()
+                .collect(Collectors.toMap(InventoryResponse::getInventoryId, r -> r));
+        List<InventoryResponse> ordered = ids.getContent().stream()
+                .map(byId::get)
+                .toList();
+
+        return new PageResult<>(ordered, ids.getTotalElements(), page, pageSize);
     }
 }
