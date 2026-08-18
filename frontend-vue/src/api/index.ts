@@ -65,6 +65,8 @@ export interface InventoryItem {
 export const getInventory = (params: {
   keyword?: string
   warehouseId?: number
+  /** 选做A：按商品精确过滤（出库页展示该商品各库位可用库存用） */
+  productId?: number
   lowStockOnly?: boolean
   page?: number
   pageSize?: number
@@ -90,3 +92,20 @@ export const createInboundOrder = (data: {
   items: InboundItemRequest[]
 }) =>
   api.post('/inbound-orders', data)
+
+
+// ============ 出库单（选做A） ============
+
+export interface OutboundItemRequest {
+  productId: number
+  quantity: number
+  locationCode: string
+}
+
+export const createOutboundOrder = (data: {
+  customerName: string
+  /** 幂等键：弱网重试时复用同一 requestId，后端保证不会重复出库/重复扣库存 */
+  requestId?: string
+  items: OutboundItemRequest[]
+}) =>
+  api.post('/outbound-orders', data)

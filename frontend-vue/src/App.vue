@@ -17,6 +17,7 @@
         <el-menu-item index="/products">商品管理</el-menu-item>
         <el-menu-item index="/inventory">库存查询</el-menu-item>
         <el-menu-item index="/inbound">入库管理</el-menu-item>
+        <el-menu-item index="/outbound">出库管理</el-menu-item>
       </el-menu>
     </el-header>
 
