@@ -5,6 +5,7 @@ import com.wms.entity.Inventory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -32,6 +33,7 @@ public interface InventoryRepository extends JpaRepository<Inventory, Long> {
      * 第一步：分页查满足筛选条件的库存行 id（只返回主键，无回表）。
      * - keyword 模糊匹配：商品名称 / SKU / 库位编码（仓库筛选走 warehouseId 下拉）
      * - warehouseId 精确匹配仓库（空则不过滤）
+     * - productId 精确匹配商品（选做A：出库页展示某商品各库位可用库存用；空则不过滤）
      * - lowStockOnly=true 时仅返回 quantity < 10 的告急库存
      * 分页 + count 由 Spring Data 自动完成；排序必须稳定（按主键 id）。
      */
@@ -44,10 +46,12 @@ public interface InventoryRepository extends JpaRepository<Inventory, Long> {
                    OR p.sku LIKE CONCAT('%', :keyword, '%')
                    OR i.locationCode LIKE CONCAT('%', :keyword, '%'))
               AND (:warehouseId IS NULL OR l.warehouseId = :warehouseId)
+              AND (:productId IS NULL OR i.productId = :productId)
               AND (:lowStockOnly = FALSE OR i.quantity < 10)
             """)
     Page<Long> findIdsByFilters(@Param("keyword") String keyword,
                                 @Param("warehouseId") Long warehouseId,
+                                @Param("productId") Long productId,
                                 @Param("lowStockOnly") boolean lowStockOnly,
                                 Pageable pageable);
 
@@ -71,4 +75,25 @@ public interface InventoryRepository extends JpaRepository<Inventory, Long> {
 
     /** 删除某商品全部库存行（任务3：确认删除时级联清理） */
     void deleteByProductId(Long productId);
+
+    /**
+     * 原子条件扣减（选做A：防超卖最终兜底）。
+     *
+     * 单条 UPDATE 在 InnoDB 下对命中行加 X 锁，同一行并发扣减天然串行；
+     * 条件 quantity >= :qty 保证"检查+扣减"原子完成，任何并发交错下
+     * 库存都不会被扣成负数。返回受影响行数：1=扣减成功，0=库存不足。
+     *
+     * 注意：JPA bulk update 绕过实体生命周期（@PreUpdate 不触发），
+     * 这里手动刷新 updatedAt；调用方不要在同一事务内先加载该 Inventory 实体
+     * （一级缓存旧值可能被脏检查覆盖扣减结果）。
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE Inventory i
+            SET i.quantity = i.quantity - :qty, i.updatedAt = CURRENT_TIMESTAMP
+            WHERE i.productId = :productId AND i.locationCode = :locationCode AND i.quantity >= :qty
+            """)
+    int deductStock(@Param("productId") Long productId,
+                    @Param("locationCode") String locationCode,
+                    @Param("qty") int qty);
 }

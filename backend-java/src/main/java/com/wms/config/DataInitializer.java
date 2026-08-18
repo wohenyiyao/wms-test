@@ -5,6 +5,7 @@ import com.wms.repository.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 /**
@@ -19,9 +20,12 @@ public class DataInitializer implements CommandLineRunner {
     private final WarehouseRepository warehouseRepository;
     private final LocationRepository locationRepository;
     private final InventoryRepository inventoryRepository;
+    private final JdbcTemplate jdbcTemplate;
 
     @Override
     public void run(String... args) {
+        initOrderSequences();
+
         if (productRepository.count() > 0) {
             log.info("示例数据已存在，跳过初始化");
             return;
@@ -56,5 +60,26 @@ public class DataInitializer implements CommandLineRunner {
         log.info("示例数据初始化完成: {} 商品, {} 仓库, {} 库位, {} 库存记录",
                 productRepository.count(), warehouseRepository.count(),
                 locationRepository.count(), inventoryRepository.count());
+    }
+
+    /**
+     * 初始化单号序列表（选做A）：确保 IN/OUT 序列行存在，
+     * next_value 取「当前 DB 最大单号序号 + 1」（避免与既有单号冲突）；
+     * 已存在且更大时不覆盖（ON DUPLICATE KEY UPDATE next_value = next_value 保持原值）。
+     */
+    private void initOrderSequences() {
+        initSequence("IN", "inbound_orders");
+        initSequence("OUT", "outbound_orders");
+        log.info("单号序列表初始化完成");
+    }
+
+    private void initSequence(String seqType, String table) {
+        // 注意：目标表 order_sequences 与源表不同，INSERT ... SELECT ... ON DUPLICATE KEY 合法
+        jdbcTemplate.update("""
+                INSERT INTO order_sequences (seq_type, next_value)
+                SELECT ?, COALESCE(MAX(CAST(SUBSTRING_INDEX(order_no, '-', -1) AS UNSIGNED)), 0) + 1
+                FROM %s WHERE order_no LIKE ?
+                ON DUPLICATE KEY UPDATE next_value = next_value
+                """.formatted(table), seqType, seqType + "-%");
     }
 }

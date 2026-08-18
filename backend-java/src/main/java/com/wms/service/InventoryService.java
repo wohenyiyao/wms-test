@@ -14,6 +14,7 @@ import com.wms.repository.InboundOrderItemRepository;
 import com.wms.repository.InboundOrderRepository;
 import com.wms.repository.InventoryRepository;
 import com.wms.repository.LocationRepository;
+import com.wms.repository.OrderSequenceRepository;
 import com.wms.repository.ProductRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -49,6 +50,8 @@ public class InventoryService {
     private final InboundOrderItemRepository inboundOrderItemRepository;
     private final ProductRepository productRepository;
     private final LocationRepository locationRepository;
+    private final RedisStockService redisStockService;
+    private final OrderSequenceRepository orderSequenceRepository;
 
     /**
      * 入库单创建 — 任务1
@@ -115,6 +118,8 @@ public class InventoryService {
                             .build());
             inventory.setQuantity(inventory.getQuantity() + item.getQuantity());
             inventoryRepository.save(inventory);
+            // 同步 Redis 库存镜像（选做A：出库预扣门控的数据源；失败不影响 DB，由懒加载/启动重建自愈）
+            redisStockService.increase(product.getId(), item.getLocationCode(), item.getQuantity());
 
             itemResponses.add(InboundOrderResponse.ItemResponse.builder()
                     .productId(product.getId())
@@ -163,29 +168,29 @@ public class InventoryService {
     }
 
     /**
-     * 生成入库单号：IN-YYYYMMDD-XXX（当日序号，从 001 递增）
+     * 生成入库单号：IN-YYYYMMDD-XXX。
+     * 序号来自 order_sequences 表（MySQL 原子发号：UPDATE 行锁 + LAST_INSERT_ID），
+     * 并发安全（详见 OrderSequence 注释）；XXX 全局递增，单号唯一性由
+     * 「前缀 + 序号」保证（跨天不重置，避免按日重置的并发边界）。
      */
     private String generateOrderNo() {
-        String prefix = "IN-" + LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
-        int maxSeq = inboundOrderRepository.findOrderNosByPrefix(prefix).stream()
-                .map(no -> no.substring(no.lastIndexOf('-') + 1))
-                .mapToInt(Integer::parseInt)
-                .max()
-                .orElse(0);
-        return prefix + "-" + String.format("%03d", maxSeq + 1);
+        orderSequenceRepository.advance("IN");
+        long seq = orderSequenceRepository.lastInsertId();
+        return "IN-" + LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"))
+                + "-" + String.format("%03d", seq);
     }
 
     /**
-     * 库存查询 — 任务2
+     * 库存查询 — 任务2（选做A 扩展：支持按商品精确过滤，出库页展示可用库存用）
      *
-     * 按 商品名称/SKU/库位编码 模糊搜索 + 仓库筛选 + 告急筛选 + 分页。
+     * 按 商品名称/SKU/库位编码 模糊搜索 + 仓库筛选 + 商品筛选 + 告急筛选 + 分页。
      * 分页采用「两步查询」优化（先查 id 集合、再 IN 取详情），配合 OFFSET 深度上限，
      * 避免深分页全量回表（详见 InventoryRepository 注释）。
      *
      * @throws BusinessException 400 查询深度超过上限（深分页兜底：数据量大时应缩小筛选范围）
      */
     @Transactional(readOnly = true)
-    public PageResult<InventoryResponse> queryInventory(String keyword, Long warehouseId,
+    public PageResult<InventoryResponse> queryInventory(String keyword, Long warehouseId, Long productId,
                                                         boolean lowStockOnly,
                                                         int page, int pageSize) {
         // 深分页兜底：OFFSET 深度上限，防止页码无限增大导致全表扫描
@@ -199,7 +204,7 @@ public class InventoryService {
 
         // 第一步：只查 id 集合（分页 + count 走主键/筛选索引，零回表）
         Page<Long> ids = inventoryRepository.findIdsByFilters(
-                safeKeyword, warehouseId, lowStockOnly,
+                safeKeyword, warehouseId, productId, lowStockOnly,
                 PageRequest.of(Math.max(page - 1, 0), pageSize, Sort.by("id")));
 
         // 第二步：按 id 集合查完整明细，并按第一步的 id 顺序重排

@@ -7,6 +7,7 @@ import com.wms.dto.ProductUpdateRequest;
 import com.wms.entity.Product;
 import com.wms.repository.InboundOrderItemRepository;
 import com.wms.repository.InventoryRepository;
+import com.wms.repository.OutboundOrderItemRepository;
 import com.wms.repository.ProductRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -28,6 +29,7 @@ public class ProductService {
     private final ProductRepository productRepository;
     private final InventoryRepository inventoryRepository;
     private final InboundOrderItemRepository inboundOrderItemRepository;
+    private final OutboundOrderItemRepository outboundOrderItemRepository;
 
     public List<ProductResponse> list(String keyword) {
         List<Product> products = productRepository.search(keyword);
@@ -70,11 +72,11 @@ public class ProductService {
     }
 
     /**
-     * 删除商品（任务 3 修复）。
+     * 删除商品（任务 3 修复；选做A 扩展出库记录联动）。
      *
-     * 安全策略：默认校验关联数据（库存 / 历史入库记录）——
+     * 安全策略：默认校验关联数据（库存 / 历史入库记录 / 出库记录）——
      * 有关联时返回 400 提示数量，由前端二次确认后带 force=true 重试；
-     * force=true 时在同一事务内级联清理关联库存与历史入库记录后再删除商品，
+     * force=true 时在同一事务内级联清理关联库存、入库明细与出库明细后再删除商品，
      * 避免「商品删了、库存/记录成为孤立脏数据」（预埋 Bug 根因）。
      */
     @Transactional
@@ -83,21 +85,26 @@ public class ProductService {
             throw new BusinessException(404, "商品不存在");
         }
         long inventoryCount = inventoryRepository.countByProductId(id);
-        long recordCount = inboundOrderItemRepository.countByProductId(id);
+        long inboundCount = inboundOrderItemRepository.countByProductId(id);
+        long outboundCount = outboundOrderItemRepository.countByProductId(id);
 
-        if ((inventoryCount > 0 || recordCount > 0) && !force) {
+        if ((inventoryCount > 0 || inboundCount > 0 || outboundCount > 0) && !force) {
             throw new BusinessException(400,
-                    "该商品存在库存 " + inventoryCount + " 条、历史入库记录 " + recordCount
-                            + " 条，删除将同时清理关联数据，请确认后重试");
+                    "该商品存在库存 " + inventoryCount + " 条、历史入库记录 " + inboundCount
+                            + " 条、出库记录 " + outboundCount + " 条，删除将同时清理关联数据，请确认后重试");
         }
         if (inventoryCount > 0) {
             inventoryRepository.deleteByProductId(id);
         }
-        if (recordCount > 0) {
+        if (inboundCount > 0) {
             inboundOrderItemRepository.deleteByProductId(id);
         }
+        if (outboundCount > 0) {
+            outboundOrderItemRepository.deleteByProductId(id);
+        }
         productRepository.deleteById(id);
-        log.info("删除商品: id={}, force={}, 清理库存={}条/入库记录={}条", id, force, inventoryCount, recordCount);
+        log.info("删除商品: id={}, force={}, 清理库存={}条/入库记录={}条/出库记录={}条",
+                id, force, inventoryCount, inboundCount, outboundCount);
     }
 
     private ProductResponse toResponse(Product product) {

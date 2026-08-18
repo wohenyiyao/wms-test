@@ -38,18 +38,20 @@ public class InventoryController {
     /**
      * 库存查询 — 任务2
      * 支持 商品名称/SKU/库位编码 模糊搜索(keyword) + 仓库筛选(warehouseId) +
-     * 告急筛选(lowStockOnly, quantity<10) + 分页；pageSize 上限 100（可用性兜底）。
+     * 商品筛选(productId, 选做A 出库页展示可用库存用) + 告急筛选(lowStockOnly, quantity<10) +
+     * 分页；pageSize 上限 100（可用性兜底）。
      */
     @GetMapping("/inventory")
     public ApiResponse<PageResult<InventoryResponse>> queryInventory(
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) Long warehouseId,
+            @RequestParam(required = false) Long productId,
             @RequestParam(defaultValue = "false") boolean lowStockOnly,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int pageSize) {
         int safePage = Math.max(page, 1);
         int safeSize = Math.min(Math.max(pageSize, 1), 100);
         return ApiResponse.success(
-                inventoryService.queryInventory(keyword, warehouseId, lowStockOnly, safePage, safeSize));
+                inventoryService.queryInventory(keyword, warehouseId, productId, lowStockOnly, safePage, safeSize));
     }
 }
