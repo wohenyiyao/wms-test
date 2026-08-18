@@ -6,7 +6,9 @@ import com.wms.dto.InboundItemRequest;
 import com.wms.dto.InboundOrderCreateRequest;
 import com.wms.dto.InventoryResponse;
 import com.wms.entity.Product;
+import com.wms.entity.Warehouse;
 import com.wms.repository.ProductRepository;
+import com.wms.repository.WarehouseRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -33,6 +35,9 @@ class InventoryQueryServiceTest {
 
     @Autowired
     private ProductRepository productRepository;
+
+    @Autowired
+    private WarehouseRepository warehouseRepository;
 
     @Test
     void queryInventory_shouldReturnRowsWithFullFields() {
@@ -157,6 +162,27 @@ class InventoryQueryServiceTest {
         PageResult<InventoryResponse> ok = inventoryService.queryInventory(null, null, false, 100, 100);
         assertNotNull(ok);
         assertTrue(ok.getTotal() >= 0);
+    }
+
+    @Test
+    void queryInventory_keyword_shouldMatchWarehouseName() {
+        // given：p1 入 WH-A（仓库 1），p2 入 WH-B（仓库 2）
+        Product p1 = saveProduct(tag());
+        Product p2 = saveProduct(tag());
+        inventoryService.createInboundOrder(request("查询测试",
+                item(p1.getId(), 2, "WH-A-01-01"),
+                item(p2.getId(), 6, "WH-B-01-01")));
+        String whAName = warehouseRepository.findById(1L).map(Warehouse::getName).orElseThrow();
+
+        // when：按仓库名称搜索
+        PageResult<InventoryResponse> byWhName = inventoryService.queryInventory(whAName, null, false, 1, 100);
+
+        // then：只返回 WH-A 的行（仓库名精确匹配）
+        assertTrue(byWhName.getTotal() >= 1);
+        assertTrue(byWhName.getList().stream().anyMatch(r -> r.getProductId().equals(p1.getId())));
+        assertTrue(byWhName.getList().stream().noneMatch(r -> r.getProductId().equals(p2.getId())),
+                "按仓库名搜索不应返回其他仓库的行");
+        assertTrue(byWhName.getList().stream().allMatch(r -> whAName.equals(r.getWarehouseName())));
     }
 
     // ---------- helpers ----------

@@ -118,8 +118,8 @@ onMounted(async () => {
     <div class="table-toolbar">
       <el-input
         v-model="keyword"
-        placeholder="搜索商品名称/SKU/库位编码，输入后自动搜索"
-        style="width: 320px"
+        placeholder="搜索商品名称/SKU/库位/仓库名，输入后自动搜索"
+        style="width: 340px"
         clearable
         @keyup.enter="manualSearch"
       />

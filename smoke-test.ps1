@@ -244,6 +244,18 @@ Test-Case 'GET /api/inventory?warehouseId=1 -> rows with warehouseName (WH-A)' {
     }
 }
 
+Test-Case 'GET /api/inventory?keyword=<warehouse name> -> all rows match that warehouse' {
+    $w = Invoke-Api GET '/api/warehouses'
+    Assert-True ($w.Status -eq 200) "warehouses HTTP = $($w.Status)"
+    $whName = $w.Json.data[0].name
+    $enc = [uri]::EscapeDataString($whName)
+    $r = Invoke-Api GET "/api/inventory?keyword=$enc"
+    Assert-True ($r.Status -eq 200) "HTTP status = $($r.Status)"
+    foreach ($row in $r.Json.data.list) {
+        Assert-True ($row.warehouseName -eq $whName) "row warehouse = $($row.warehouseName), expected $whName"
+    }
+}
+
 Test-Case 'GET /api/inventory?lowStockOnly=true -> all rows quantity<10' {
     $r = Invoke-Api GET '/api/inventory?lowStockOnly=true'
     Assert-True ($r.Status -eq 200) "HTTP status = $($r.Status)"
