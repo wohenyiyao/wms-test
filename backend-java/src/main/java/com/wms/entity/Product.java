@@ -6,7 +6,10 @@ import lombok.*;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "products")
+@Table(name = "products", indexes = {
+    // 筛选字段索引：name（keyword 模糊搜索该列；等值/前缀匹配走索引）
+    @Index(name = "idx_products_name", columnList = "name")
+})
 @Data
 @NoArgsConstructor
 @AllArgsConstructor

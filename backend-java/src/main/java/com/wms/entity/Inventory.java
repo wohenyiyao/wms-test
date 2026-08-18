@@ -12,6 +12,9 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "inventory", uniqueConstraints = {
     @UniqueConstraint(columnNames = {"product_id", "location_code"})
+}, indexes = {
+    // 筛选/join 字段索引：location_code（keyword 模糊搜索该列；等值/前缀匹配走索引）
+    @Index(name = "idx_inventory_location_code", columnList = "location_code")
 })
 @Data
 @NoArgsConstructor
