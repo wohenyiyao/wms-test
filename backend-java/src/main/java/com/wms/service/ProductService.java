@@ -5,6 +5,8 @@ import com.wms.dto.ProductCreateRequest;
 import com.wms.dto.ProductResponse;
 import com.wms.dto.ProductUpdateRequest;
 import com.wms.entity.Product;
+import com.wms.repository.InboundOrderItemRepository;
+import com.wms.repository.InventoryRepository;
 import com.wms.repository.ProductRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,6 +26,8 @@ import java.util.stream.Collectors;
 public class ProductService {
 
     private final ProductRepository productRepository;
+    private final InventoryRepository inventoryRepository;
+    private final InboundOrderItemRepository inboundOrderItemRepository;
 
     public List<ProductResponse> list(String keyword) {
         List<Product> products = productRepository.search(keyword);
@@ -65,15 +69,35 @@ public class ProductService {
         return toResponse(product);
     }
 
+    /**
+     * 删除商品（任务 3 修复）。
+     *
+     * 安全策略：默认校验关联数据（库存 / 入库单明细）——
+     * 有关联时返回 400 提示关联数量，由前端二次确认后带 force=true 重试；
+     * force=true 时在同一事务内级联清理关联库存与入库单明细后再删除商品，
+     * 避免「商品删了、库存/明细成为孤立脏数据」（预埋 Bug 根因）。
+     */
     @Transactional
-    public void delete(Long id) {
-        // ️ BUG 预埋点：没有校验该商品是否有关联库存
-        // 候选人需要在任务3中发现并修复此问题
+    public void delete(Long id, boolean force) {
         if (!productRepository.existsById(id)) {
             throw new BusinessException(404, "商品不存在");
         }
+        long inventoryCount = inventoryRepository.countByProductId(id);
+        long itemCount = inboundOrderItemRepository.countByProductId(id);
+
+        if ((inventoryCount > 0 || itemCount > 0) && !force) {
+            throw new BusinessException(400,
+                    "该商品存在库存 " + inventoryCount + " 条、入库明细 " + itemCount
+                            + " 条，删除将同时清理关联数据，请确认后重试");
+        }
+        if (inventoryCount > 0) {
+            inventoryRepository.deleteByProductId(id);
+        }
+        if (itemCount > 0) {
+            inboundOrderItemRepository.deleteByProductId(id);
+        }
         productRepository.deleteById(id);
-        log.info("删除商品: id={}", id);
+        log.info("删除商品: id={}, force={}, 清理库存={}条/明细={}条", id, force, inventoryCount, itemCount);
     }
 
     private ProductResponse toResponse(Product product) {

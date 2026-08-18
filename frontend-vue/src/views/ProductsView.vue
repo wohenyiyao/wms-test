@@ -5,11 +5,12 @@
  * 展示了：
  * - 列表 + 搜索
  * - 新增 / 编辑弹窗
- * - 删除确认
+ * - 删除确认（有关联数据时二次确认后 force 删除）
  * - 分页（前端分页，简单示例）
  *
- * ️ BUG 预埋点：编辑后返回列表时页码会重置为第1页
- *   候选人需要在任务3中修复此问题
+ * 任务 3 已修复：
+ * - 编辑/新增后保持当前页码，不再跳回第 1 页
+ * - 删除有库存/明细的商品：提示 → 二次确认 → 后端事务内级联清理
  */
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -71,23 +72,48 @@ const handleSubmit = async () => {
       ElMessage.success('创建成功')
     }
     dialogVisible.value = false
-    // ️ BUG: 编辑后不保留当前页码
-    currentPage.value = 1
+    // 修复：编辑/新增后保持当前页码，不再重置回第 1 页（预埋 Bug）
     await loadProducts()
   } catch (e: any) {
     ElMessage.error(e.response?.data?.message || '操作失败')
   }
 }
 
-// 删除
+// 删除：默认有关联库存/明细时后端返回 400 提示 → 二次确认后 force 重试（任务 3 修复）
 const handleDelete = async (id: number) => {
   try {
     await ElMessageBox.confirm('确定删除该商品吗？', '确认删除', { type: 'warning' })
     await deleteProduct(id)
     ElMessage.success('删除成功')
+    await afterDeleteReload()
+  } catch (e: any) {
+    const msg = e.response?.data?.message || ''
+    if (e.response?.status === 400 && msg) {
+      // 有关联数据：提示并二次确认，确认后强制删除（后端事务内级联清理）
+      try {
+        await ElMessageBox.confirm(msg + '，是否继续删除？', '存在关联数据', {
+          type: 'warning',
+          confirmButtonText: '确认删除',
+          cancelButtonText: '取消',
+        })
+        await deleteProduct(id, true)
+        ElMessage.success('删除成功（已清理关联数据）')
+        await afterDeleteReload()
+      } catch {
+        // 用户取消二次确认
+      }
+    }
+    // 用户取消首次确认 / 其他错误：静默（确认框取消不报错）
+  }
+}
+
+/** 删除后重新加载并处理空页回退：若当前页已无数据则回退一页 */
+const afterDeleteReload = async () => {
+  await loadProducts()
+  const maxPage = Math.max(1, Math.ceil(products.value.length / pageSize.value))
+  if (currentPage.value > maxPage) {
+    currentPage.value = maxPage
     await loadProducts()
-  } catch {
-    // 取消
   }
 }
 </script>

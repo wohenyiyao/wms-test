@@ -65,4 +65,10 @@ public interface InventoryRepository extends JpaRepository<Inventory, Long> {
             WHERE i.id IN :ids
             """)
     List<InventoryResponse> findDetailsByIds(@Param("ids") Collection<Long> ids);
+
+    /** 某商品关联的库存行数（任务3：删除商品前校验用） */
+    long countByProductId(Long productId);
+
+    /** 删除某商品全部库存行（任务3：确认删除时级联清理） */
+    void deleteByProductId(Long productId);
 }
