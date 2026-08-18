@@ -35,6 +35,13 @@ public class InboundOrder {
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
 
+    /**
+     * 幂等键（客户端生成 UUID，弱网重试时复用）。
+     * 同一 requestId 重复提交直接返回已创建的入库单，避免重复入库/库存虚增。
+     */
+    @Column(name = "request_id", unique = true, length = 64)
+    private String requestId;
+
     // 候选人在实现时可按需处理明细关联
     // @OneToMany(mappedBy = "orderId", cascade = CascadeType.ALL, orphanRemoval = true)
 

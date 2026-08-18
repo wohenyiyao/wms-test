@@ -20,7 +20,7 @@
       </el-menu>
     </el-header>
 
-    <el-main style="padding: 20px">
+    <el-main style="padding: 20px; background: #f5f7fa">
       <router-view />
     </el-main>
   </el-container>

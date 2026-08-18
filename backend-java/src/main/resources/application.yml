@@ -3,28 +3,28 @@ spring:
     name: wms-backend
 
   # H2 内存数据库（开发环境）
+#  datasource:
+#    url: jdbc:h2:mem:wms;DB_CLOSE_DELAY=-1;MODE=MySQL
+#    driver-class-name: org.h2.Driver
+#    username: sa
+#    password:
+
+#   如需切换到 MySQL，注释上面，取消注释下面：
   datasource:
-    url: jdbc:h2:mem:wms;DB_CLOSE_DELAY=-1;MODE=MySQL
-    driver-class-name: org.h2.Driver
-    username: sa
-    password:
+     url: jdbc:mysql://localhost:3306/wms-test?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
+     driver-class-name: com.mysql.cj.jdbc.Driver
+     username: root
+     password: root
 
-  # 如需切换到 MySQL，注释上面，取消注释下面：
-  # datasource:
-  #   url: jdbc:mysql://localhost:3306/wms?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
-  #   driver-class-name: com.mysql.cj.jdbc.Driver
-  #   username: root
-  #   password: root
-
-  h2:
-    console:
-      enabled: true
-      path: /h2-console
+#  h2:
+#    console:
+#      enabled: false
+#      path: /h2-console
 
   jpa:
     hibernate:
       ddl-auto: update
-    show-sql: true
+    show-sql: false
     properties:
       hibernate:
         format_sql: true

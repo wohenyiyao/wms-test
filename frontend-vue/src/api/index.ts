@@ -83,6 +83,8 @@ export interface InboundItemRequest {
 
 export const createInboundOrder = (data: {
   supplierName: string
+  /** 幂等键：弱网重试时复用同一 requestId，后端保证不会重复创建入库单 */
+  requestId?: string
   items: InboundItemRequest[]
 }) =>
   api.post('/inbound-orders', data)

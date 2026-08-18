@@ -13,7 +13,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',  // FastAPI 默认端口
+        target: 'http://localhost:8080',  // Java 后端端口（Spring Boot）
         changeOrigin: true,
       },
     },

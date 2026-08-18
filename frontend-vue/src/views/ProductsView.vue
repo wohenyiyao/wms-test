@@ -11,9 +11,10 @@
  * ️ BUG 预埋点：编辑后返回列表时页码会重置为第1页
  *   候选人需要在任务3中修复此问题
  */
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getProducts, createProduct, updateProduct, deleteProduct, type Product } from '@/api'
+import PageCard from '@/components/PageCard.vue'
 
 const products = ref<Product[]>([])
 const keyword = ref('')
@@ -42,8 +43,6 @@ const pagedProducts = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value
   return products.value.slice(start, start + pageSize.value)
 })
-
-import { computed } from 'vue'
 
 onMounted(loadProducts)
 
@@ -94,9 +93,9 @@ const handleDelete = async (id: number) => {
 </script>
 
 <template>
-  <div>
-    <!-- 搜索栏 -->
-    <div style="display: flex; gap: 12px; margin-bottom: 16px">
+  <PageCard title="商品管理">
+    <!-- 搜索栏 + 操作按钮 -->
+    <div class="table-toolbar">
       <el-input v-model="keyword" placeholder="搜索商品名称/SKU..." style="width: 300px" clearable
         @keyup.enter="loadProducts" @clear="loadProducts" />
       <el-button type="primary" @click="loadProducts">搜索</el-button>
@@ -118,7 +117,7 @@ const handleDelete = async (id: number) => {
     </el-table>
 
     <!-- 分页 -->
-    <div style="margin-top: 16px; text-align: right">
+    <div class="table-pagination">
       <el-pagination
         v-model:current-page="currentPage"
         :page-size="pageSize"
@@ -145,5 +144,5 @@ const handleDelete = async (id: number) => {
         <el-button type="primary" @click="handleSubmit">确定</el-button>
       </template>
     </el-dialog>
-  </div>
+  </PageCard>
 </template>
