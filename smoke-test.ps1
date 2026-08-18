@@ -115,7 +115,7 @@ Test-Case 'POST /api/inbound-orders -> HTTP 201, body code=200, orderNo format I
     $r = Invoke-Api POST '/api/inbound-orders' $body
     Assert-True ($r.Status -eq 201) "HTTP status = $($r.Status), expected 201"
     Assert-True ($r.Json.code -eq 200) "body.code = $($r.Json.code), expected 200"
-    Assert-True ($r.Json.data.orderNo -match '^IN-\d{8}-\d{3}$') "orderNo = $($r.Json.data.orderNo)"
+    Assert-True ($r.Json.data.orderNo -match '^IN-\d{8}-\d{3,}$') "orderNo = $($r.Json.data.orderNo)"
     Assert-True ($r.Json.data.status -eq 'COMPLETED') "status = $($r.Json.data.status)"
     Assert-True ($r.Json.data.items.Count -eq 1) 'items count mismatch'
     Assert-True ($r.Json.data.items[0].quantity -eq 7) 'item quantity mismatch'
@@ -290,6 +290,79 @@ Test-Case 'DELETE brand-new product without references -> 200, deleted' {
     # 已删除
     $g = Invoke-Api GET "/api/products/$id"
     Assert-True ($g.Json.code -eq 404) "deleted product should be 404, got code=$($g.Json.code)"
+}
+
+# ---------------------------------------------------------------------
+# 7. POST /api/outbound-orders (Optional A) - outbound + oversell guard
+# ---------------------------------------------------------------------
+# Prepare a dedicated product for outbound smoke cases (repeatable:
+# each case tops up 10 then deducts 10, so stock stays stable).
+$outSku = 'SMOKE-OUT-1'
+$outFound = Invoke-Api GET "/api/products?keyword=$outSku"
+if ($outFound.Json.data.Count -gt 0) {
+    $script:outPid = $outFound.Json.data[0].id
+} else {
+    $outCreated = Invoke-Api POST '/api/products' @{ name = 'SmokeOutbound'; sku = $outSku; unit = '个' }
+    $script:outPid = $outCreated.Json.data.id
+}
+Assert-True ($null -ne $script:outPid) 'failed to prepare outbound test product'
+
+Test-Case 'GET /api/inventory?productId=<id> -> rows filtered by product' {
+    # top up 10 first (the dedicated product may have zero stock at this point),
+    # then deduct 10 again to keep the stock balanced for repeatable runs.
+    $ridIn = 'in-' + (Get-Date -Format 'HHmmssfff') + '-' + (Get-Random -Minimum 100000 -Maximum 999999)
+    $inBody = @{ supplierName = 'SmokeOut'; requestId = $ridIn; items = @(@{ productId = $script:outPid; quantity = 10; locationCode = 'WH-A-01-01' }) }
+    $null = Invoke-Api POST '/api/inbound-orders' $inBody
+
+    $r = Invoke-Api GET "/api/inventory?productId=$script:outPid&pageSize=100"
+    Assert-True ($r.Status -eq 200) "HTTP status = $($r.Status), expected 200"
+    Assert-True ($r.Json.data.total -ge 1) 'no inventory rows for this product'
+    foreach ($row in $r.Json.data.list) {
+        Assert-True ($row.productId -eq $script:outPid) "row.productId = $($row.productId), expected $script:outPid"
+    }
+
+    # balance: deduct the 10 just topped up
+    $ridOut = 'out-' + (Get-Date -Format 'HHmmssfff') + '-' + (Get-Random -Minimum 100000 -Maximum 999999)
+    $outBody = @{ customerName = 'SmokeBalance'; requestId = $ridOut; items = @(@{ productId = $script:outPid; quantity = 10; locationCode = 'WH-A-01-01' }) }
+    $bal = Invoke-Api POST '/api/outbound-orders' $outBody
+    Assert-True ($bal.Status -eq 201) "balance outbound HTTP = $($bal.Status), expected 201"
+}
+
+Test-Case 'POST /api/outbound-orders -> HTTP 201, body code=200, orderNo format OUT-yyyyMMdd-XXX' {
+    # top up 10 so the case is repeatable
+    $ridIn = 'in-' + (Get-Date -Format 'HHmmssfff') + '-' + (Get-Random -Minimum 100000 -Maximum 999999)
+    $inBody = @{ supplierName = 'SmokeOut'; requestId = $ridIn; items = @(@{ productId = $script:outPid; quantity = 10; locationCode = 'WH-A-01-01' }) }
+    $null = Invoke-Api POST '/api/inbound-orders' $inBody
+
+    $body = @{ customerName = 'SmokeCustomer'; requestId = ('out-' + (Get-Date -Format 'HHmmssfff') + '-' + (Get-Random -Minimum 100000 -Maximum 999999)); items = @(@{ productId = $script:outPid; quantity = 10; locationCode = 'WH-A-01-01' }) }
+    $r = Invoke-Api POST '/api/outbound-orders' $body
+    Assert-True ($r.Status -eq 201) "HTTP status = $($r.Status), expected 201"
+    Assert-True ($r.Json.code -eq 200) "body.code = $($r.Json.code), expected 200"
+    Assert-True ($r.Json.data.orderNo -match '^OUT-\d{8}-\d{3,}$') "orderNo = $($r.Json.data.orderNo)"
+    Assert-True ($r.Json.data.status -eq 'COMPLETED') "status = $($r.Json.data.status)"
+    Assert-True ($r.Json.data.items.Count -eq 1) 'items count mismatch'
+    Assert-True ($r.Json.data.items[0].quantity -eq 10) 'item quantity mismatch'
+}
+
+Test-Case 'POST outbound same requestId twice -> same orderNo (idempotent replay)' {
+    $ridIn = 'in-' + (Get-Date -Format 'HHmmssfff') + '-' + (Get-Random -Minimum 100000 -Maximum 999999)
+    $inBody = @{ supplierName = 'SmokeOut'; requestId = $ridIn; items = @(@{ productId = $script:outPid; quantity = 10; locationCode = 'WH-A-01-01' }) }
+    $null = Invoke-Api POST '/api/inbound-orders' $inBody
+
+    $ridOut = 'out-' + (Get-Date -Format 'HHmmssfff') + '-' + (Get-Random -Minimum 100000 -Maximum 999999)
+    $body = @{ customerName = 'SmokeIdem'; requestId = $ridOut; items = @(@{ productId = $script:outPid; quantity = 10; locationCode = 'WH-A-01-01' }) }
+    $r1 = Invoke-Api POST '/api/outbound-orders' $body
+    $r2 = Invoke-Api POST '/api/outbound-orders' $body
+    Assert-True ($r1.Status -eq 201 -and $r2.Status -eq 201) "HTTP $($r1.Status)/$($r2.Status)"
+    Assert-True ($r1.Json.data.orderNo -eq $r2.Json.data.orderNo) "orderNo $($r1.Json.data.orderNo) != $($r2.Json.data.orderNo)"
+}
+
+Test-Case 'POST outbound qty > stock -> code=400 (oversell guard)' {
+    $body = @{ customerName = 'SmokeOver'; requestId = ('out-' + (Get-Date -Format 'HHmmssfff') + '-' + (Get-Random -Minimum 100000 -Maximum 999999)); items = @(@{ productId = $script:outPid; quantity = 999999; locationCode = 'WH-A-01-01' }) }
+    $r = Invoke-Api POST '/api/outbound-orders' $body
+    Assert-True ($r.Status -eq 400) "HTTP status = $($r.Status), expected 400"
+    Assert-True ($r.Json.code -eq 400) "body.code = $($r.Json.code), expected 400, raw=$($r.Raw)"
+    Assert-True ($r.Json.message.Length -gt 0) 'error message empty'
 }
 
 # ---------------------------------------------------------------------

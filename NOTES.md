@@ -296,7 +296,7 @@
 
 | 项 | 内容 |
 |------|------|
-| **现象** | 删除有库存的商品：后端报 500（数据库外键约束违反），前端提示操作失败 |
+| **现象** | 删除有库存的商品：后端报 500（数据库外键约束违反），前端提示操作失败，删除后继续进行bug复现 |
 | **复现步骤** | 商品列表页 → 删除任一有库存商品（如 SKU-001）→ 报 500 |
 | **根因** | `ProductService.delete()` 预埋点：只校验 `existsById`，**未校验关联库存/历史入库记录**；直接 `deleteById` 撞上 `inventory`/`inbound_order_items` 的外键约束 → 500。若无外键则会删掉商品留下孤立库存（TASKS 描述的脏数据场景） |
 | **修复方式** | 删除接口加 `force` 参数（默认 false）：默认先统计关联（库存 N 条 / 历史入库记录 N 条），>0 时返回 400 提示数量；前端捕获后弹确认框，用户二次确认后带 `force=true` 重试；force 模式下在同一事务内**级联清理**关联库存 + 历史入库记录后再删商品。无关联时直接删除 |
@@ -327,6 +327,139 @@
 
 ---
 
+## 7. 选做 A：出库单 + 库存扣减并发防超卖（已完成）
+
+### 7.1 需求理解
+
+- 实现出库单创建功能，核心难点是**库存扣减的并发安全**：出库时检查库存是否充足、高并发下防止超卖；
+- 需要说明选择的并发控制方案及理由（写入 NOTES）；
+- 与既有体系对齐：统一信封 `ApiResponse`、HTTP 201 创建、request_id 幂等、前端表格行内编辑交互、草稿持久化。
+
+### 7.2 设计
+
+**并发防超卖方案：Redis Lua 原子预扣（高并发闸门）+ DB 原子条件更新（正确性兜底）双层防线**
+
+```
+出库请求
+  │
+  ├─ 1. 幂等检查（requestId 唯一索引，命中返回原单）
+  ├─ 2. 校验商品/库位 + 按 (productId, locationCode) 合并明细
+  ├─ 3. Redis Lua 原子预扣（第一道闸）：GET 剩余 >= 需求 → DECRBY，否则拒绝
+  │      - key 不存在 → 懒加载 DB 当前库存 SETNX 后重试一次
+  │      - Redis 连接异常 → fail-open 放行（日志告警）
+  ├─ 4. DB 事务（同一请求内同步执行，无延迟扣减窗口）：
+  │      建出库单 + 明细 + 原子条件扣减
+  │      UPDATE inventory SET quantity = quantity - N, updated_at = NOW()
+  │      WHERE product_id=? AND location_code=? AND quantity >= N
+  │      （受影响行数 = 0 → 数据库判定库存不足 → 抛 400 回滚）
+  └─ 5. 任一步失败 → catch 中对已预扣的 Redis 行 revert() 补偿回滚 → 抛出
+```
+
+**为什么这样设计（理由）：**
+
+| 方案 | 分析 |
+|------|------|
+| **Redis Lua 原子预扣（第一道闸）** | Redis 单线程执行 Lua 天然原子；高并发下在内存中毫秒级完成"检查+扣减"，把库存不足的请求挡在 DB 之外，减轻 DB 行锁竞争。预扣失败直接 400，不占 DB 事务 |
+| **DB 原子条件更新（最终兜底）** | `UPDATE ... WHERE quantity >= N` 在 InnoDB 下对命中行加 X 锁，同一行并发扣减天然串行，库存永远不会被扣成负数。即使 Redis 预扣成功、或 Redis 挂了被降级放行，正确性始终由这条原子 SQL 保证——**Redis 与 DB 不一致只会"少卖"（多挡掉本可成功的请求），绝不超卖** |
+| ~~乐观锁 version 重试~~ | 高并发下重试率高，且多一次读；适合读多写少场景，不选 |
+| ~~悲观锁 SELECT FOR UPDATE~~ | 锁持有整个事务，并发吞吐低，多行扣减顺序不一致有死锁风险，不选 |
+| ~~仅 Redis 预扣（无 DB 兜底）~~ | Redis 非持久化权威，宕机/数据丢失即超卖，不可作为唯一防线，不选 |
+
+**一致性语义（用户关心的"什么时候更新数据库"）：**
+- 预扣与 DB 扣减**在同一请求内同步完成**，不存在"先扣 Redis、延迟落库"的窗口；
+- DB 事务成功 = 数据库已扣减（出库单+明细落库），Redis 预扣的数即真实扣减，两侧一致，无需再动 Redis；
+- DB 事务失败 → 补偿 `INCRBY` 回滚 Redis 预扣（补偿在 catch 中执行）；
+- 入库成功时同步维护 Redis 镜像（`increase`）；库存 key 懒加载（首次从 DB 读）；服务启动时全量重建（`StockSyncRunner`，以 DB 为权威覆盖 Redis）；
+- 已知边界：补偿本身失败会使 Redis 少扣（比 DB 低）→ 影响是"少卖不超卖"，由启动重建/懒加载自愈；定时对账（@Scheduled 周期性重建）记为演进方案。
+
+**并发安全发号：** 单号 `OUT-YYYYMMDD-XXX` 的序号最初用"查当日最大单号 + 1"，被并发测试暴露**事务内看不到未提交并发单号 → Duplicate entry**（synchronized 只串行化计算、save 未提交前读不到）。改为 **`order_sequences` 序列表 + MySQL 原子发号**：`UPDATE order_sequences SET next_value = LAST_INSERT_ID(next_value + 1) WHERE seq_type='OUT'` + `SELECT LAST_INSERT_ID()`——UPDATE 行锁让并发取号串行、LAST_INSERT_ID(expr) 返回本连接新值（与事务提交无关）。入库单号同步改造，全局递增、跨天不重置。
+
+### 7.2.1 设计沟通记录（人主导决策，AI 提供分析并执行）
+
+| 决策点 | 提出的方案 / 分析 | 候选人反馈 / 决定 | 最终方案与理由 |
+|--------|------------------|------------------|----------------|
+| 并发控制主方案 | 数据库原子条件更新（推荐）/ 悲观锁 / 乐观锁 | 主动提出：「数据库判断库存是否超扣兜底，lua 原子 redis 预扣应对高并发怎么样？」 | **双层防线**：Redis Lua 原子预扣做高并发门控 + DB 原子条件更新做正确性兜底（详见 §7.2）。Redis 承担吞吐、DB 承担正确性，两者职责分离 |
+| Redis 预扣后何时更新数据库 | ——（用户主动提问，理解方案） | 追问：「没说明什么时候去更新数据库呢？」 | **预扣与 DB 扣减同一请求内同步完成**，无延迟扣减窗口；DB 失败即补偿回滚 Redis（详见 §7.2 一致性语义） |
+| 出库页库存展示 | 加"可用库存"列（需给 GET /api/inventory 加 productId 参数）/ 不加只靠后端校验 | 选择加展示 | GET /api/inventory 增加可选 `productId` 过滤；行内选商品后实时显示该库位可用库存，超量前端直接拦截标红，后端仍兜底 |
+| 并发验证方式 | 真实并发集成测试 / 仅 Mockito 单测 | 选择写真实并发测试 | `OutboundConcurrencyTest`：20 线程抢同一库存（初始 100、每单 6），断言成功数 ≤ 16、最终库存精确 = 初始 − 成功量、Redis 镜像一致 |
+| Redis 运行方式 | 本机 E:\redis 启动 / Docker 容器 | 选择本机 | 本机 Redis 8.8（端口 6379、无密码），启动命令写入 README；应用侧 spring-data-redis 连接 |
+| Redis 不可用降级 | fail-open 降级纯 DB / fail-closed 拒绝出库 | 选择 fail-open | Redis 连接异常时跳过预扣、直接走 DB 原子扣减：正确性由 DB 保证，只损失高并发拦截能力；系统可用性优先 |
+| Redis 与 DB 一致性对账 | 懒加载 + 增量维护 + 启动重建 / 再加定时对账任务 | 选择前者 | 库存 key 懒加载（首次从 DB 读）+ 入库/出库成功时增量维护 + 服务启动全量重建；定时对账（@Scheduled）记为演进方案 |
+
+### 7.3 实现（文件清单）
+
+后端（`backend-java/src/main/java/com/wms/`）：
+- `entity/OutboundOrder.java`、`entity/OutboundOrderItem.java`：出库单主表/明细（`outbound_orders` / `outbound_order_items`）
+- `entity/OrderSequence.java` + `repository/OrderSequenceRepository.java`：单号序列表 + 原子发号（LAST_INSERT_ID 技巧）
+- `repository/OutboundOrderRepository.java`、`repository/OutboundOrderItemRepository.java`：幂等查询 / 明细查询 / 商品关联统计与级联
+- `repository/InventoryRepository.java`：新增 `deductStock` 原子条件扣减（@Modifying bulk update，手动刷新 updatedAt，注释说明一级缓存注意事项）
+- `service/RedisStockService.java`：Lua 原子预扣（GET→DECRBY 脚本）/ 补偿回滚 / 入库镜像同步 / 启动重建 / fail-open 降级
+- `service/OutboundOrderService.java`：出库主流程（幂等 → 校验合并 → 预扣 → DB 事务 → 失败补偿）；明细按 (商品,库位) 合并避免"扣一半回滚"
+- `controller/OutboundController.java`：`POST /api/outbound-orders`（HTTP 201 + 统一信封）
+- `config/StockSyncRunner.java`：启动时全量重建 Redis 库存镜像
+- `config/DataInitializer.java`：初始化 `order_sequences`（IN/OUT 行，next_value 取当前 DB 最大序号 + 1）
+- 联动：`InventoryService.createInboundOrder` 入库成功后同步 Redis 镜像；`ProductService.delete` 关联校验/级联清理扩展出库记录；`InventoryService/InventoryRepository/InventoryController` 查询增加 `productId` 过滤
+
+前端（`frontend-vue/src/`）：
+- `views/OutboundView.vue`：出库页（客户名称、表格行内编辑、**可用库存列**实时展示+超量前端拦截、localStorage 草稿 `wms.outbound.draft`、requestId 幂等键）
+- `api/index.ts`：`createOutboundOrder` / `OutboundItemRequest` / `getInventory` 增加 `productId`；`router/index.ts` + `App.vue` 加 `/outbound` 入口
+
+### 7.4 对照验收
+
+- API_SPEC 约定：统一信封 `code=200` + HTTP 201 创建 ✓；参数校验（customerName 非空、quantity 1..999999、items 非空）✓；
+- 幂等：requestId 唯一索引 + 命中返回原单 ✓（含前端失败重试复用、成功换新键）；
+- 并发安全：20 线程真实并发集成测试通过（详见 7.5）✓；
+- 前端：出库页行内编辑/草稿/可用库存列/路由菜单 ✓（vue-tsc 通过）。
+
+### 7.5 冒烟测试
+
+- **JUnit 39 用例全绿**（新增 12 例）：
+  - `OutboundOrderServiceTest`（Mockito，6 例）：预扣成功 / Redis 库存不足 400 / DB 兜底拦截并补偿 Redis / 幂等重放 / 同商品库位合并只扣一次 / 商品不存在 404；
+  - `OutboundOrderApiTest`（MockMvc，5 例）：201+信封+单号 `OUT-\d{8}-\d{3,}` / 库存不足 400（body code 400）/ 幂等重放同单号 / 商品 404 / 库位 404；
+  - `OutboundConcurrencyTest`（**真实并发**，1 例）：20 线程 × 6 件抢库存 100，断言成功数 ≤ 16、成功数×6 + 最终库存 = 100、Redis 镜像与 DB 一致、库存 ≥ 0；
+  - 既有测试适配：queryInventory 新增 productId 参数、单号格式断言放宽（序号全局递增后可能超过 3 位）。
+- **smoke 28 用例全绿**（新增 4 例）：出库正向（201 + OUT 单号）、幂等重放、库存不足 400、`GET /api/inventory?productId=` 过滤；用独立商品 SMOKE-OUT-1 + 入库/出库数量平衡，可重复运行。
+
+### 7.6 漏洞思考（按固定 8 项清单逐项审视）
+
+| # | 项 | 分析与措施 |
+|---|-----|-----------|
+| 1 | 注入 | 全部 JPQL 参数化（`:param`），序列表发号用原生 SQL 但参数绑定 `:seqType`，无拼接 |
+| 2 | 认证越权 | 项目无认证体系（模板现状）；出库接口与既有接口一致，未扩大暴露面，记录为已知边界 |
+| 3 | 敏感信息 | 响应仅返回订单/明细/库存字段，无凭证类数据 |
+| 4 | 输入边界 | `quantity` @Min(1) @Max(999999)、customerName 长度 ≤200、items @NotEmpty；查询 pageSize 上限 100（沿用） |
+| 5 | 幂等重复提交 | requestId 唯一索引 + 命中返回原单；前端失败重试复用同一键、成功换新；并发下唯一索引兜底 |
+| 6 | 并发竞态 | **防超卖双层防线**（Redis Lua 预扣 + DB 原子条件更新）；**单号并发安全**（序列表原子发号，并发测试曾暴露 Duplicate entry 并修复）；明细合并避免"扣一半回滚"；补偿只对已预扣行执行 |
+| 7 | XSS | 前端渲染为 el-table 文本插值（自动转义），出库页同入库页 |
+| 8 | 可用性兜底 | Redis fail-open 降级纯 DB（正确性不依赖 Redis）；预扣失败快速 400 不占 DB 事务；出库单无列表接口不涉及分页上限；超时 2s（application.yml） |
+
+### 7.7 代码 Review（事务 / SQL 性能 / 空指针 / 并发）
+
+**事务：**
+- `createOutboundOrder` 整体 `@Transactional(rollbackFor=Exception.class)`：预扣、建单、明细、扣减任一步失败整体回滚；Redis 操作不参与 DB 事务，失败由 catch 补偿；
+- 补偿逻辑覆盖**预扣循环 + DB 扣减段**（初版只包住预扣循环，被并发测试暴露"DB 兜底拦截未补偿 Redis"，已修复）。
+
+**SQL 性能：**
+- 扣减是单条索引定位 UPDATE（`(product_id, location_code)` 唯一键），无锁竞争放大；发号是单行 UPDATE（行锁微秒级）；
+- 库存查询沿用两步分页 + 深分页上限，本次仅加 `productId` 等值过滤（走索引）；
+- 入库同步 Redis 是旁路操作（失败不影响 DB）。
+
+**空指针：**
+- `preDeduct` 返回 null（脚本异常）按降级放行；`initFromDb` DB 无行按 0；`toResponse` 商品名 orElse("");
+- Redis 异常全部 catch 降级，不向业务层抛原始连接异常。
+
+**并发（本轮重点，测试暴露并修复 4 个真实问题）：**
+| 问题 | 现象（测试暴露） | 修复 |
+|------|-----------------|------|
+| Redis 镜像初始化重复累加 | 入库 100 后镜像 200（`setIfAbsent(0)` 后又 set DB 值再 INCRBY） | `increase` 改为：key 不存在 → 直接以 DB 当前值初始化；存在 → INCRBY |
+| DB 兜底拦截未补偿 Redis | 并发测试 Redis=80 vs DB=82（17 个线程 DB 失败但预扣未退回） | try-catch 扩展覆盖 DB 扣减段，失败统一补偿已预扣行 |
+| 并发单号重复 | `Duplicate entry 'OUT-...-005'`（synchronized 内"计算"但 save 未提交，其他线程读不到） | 序列表 LAST_INSERT_ID 原子发号（入库/出库统一） |
+| 测试清理顺序违反外键 | tearDown 删主表被 `outbound_order_items.order_id` 外键拦截，残留脏数据 | 先删明细再删主表（事务内执行）；`ProductService.delete` 的级联顺序本就正确（先明细后商品） |
+
+**验收结论：** 出库单 + 双层防超卖闭环完成：JUnit 39 用例（含真实并发集成）+ smoke 28 用例全绿；并发安全由"Redis 预扣闸门 + DB 原子兜底 + 失败补偿 + 序列表发号"四重机制保证；方案与理由、演进方向（定时对账、Redis 预扣的 Lua 门控扩展）已记录。
+
+---
+
 ## 6. 任务进度总览
 
 | 任务 | 状态 |
@@ -334,4 +467,5 @@
 | 必做 1：入库单创建 | ✅ 完成（含测试与 review） |
 | 必做 2：库存查询 | ✅ 完成（含测试与 review） |
 | 必做 3：修复 2 个预埋 Bug | ✅ 完成（含测试与 review） |
-| 选做 A/B/C | ⬜ 待做（完成后按同一流程记录） |
+| 选做 A：出库单 + 库存扣减防超卖 | ✅ 完成（Redis Lua 预扣 + DB 原子兜底双层防线，39 测试 + 28 冒烟全绿，含真实并发集成测试） |
+| 选做 B / C | ⬜ 待做 |
