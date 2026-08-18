@@ -1,6 +1,7 @@
 package com.wms.controller;
 
 import com.wms.common.ApiResponse;
+import com.wms.common.PageResult;
 import com.wms.dto.InboundOrderCreateRequest;
 import com.wms.dto.InboundOrderResponse;
 import com.wms.dto.InventoryResponse;
@@ -9,8 +10,6 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
-
-import java.util.List;
 
 /**
  * 入库单 & 库存 Controller
@@ -37,15 +36,20 @@ public class InventoryController {
     }
 
     /**
-     * 库存查询 — 任务2（候选人实现）
+     * 库存查询 — 任务2
+     * 支持 商品名称/SKU/库位编码 模糊搜索(keyword) + 仓库筛选(warehouseId) +
+     * 告急筛选(lowStockOnly, quantity<10) + 分页；pageSize 上限 100（可用性兜底）。
      */
     @GetMapping("/inventory")
-    public ApiResponse<List<InventoryResponse>> queryInventory(
+    public ApiResponse<PageResult<InventoryResponse>> queryInventory(
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) Long warehouseId,
+            @RequestParam(defaultValue = "false") boolean lowStockOnly,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int pageSize) {
-        // TODO: 调用 inventoryService.queryInventory(...)
-        return ApiResponse.error(501, "请实现库存查询功能（任务2）");
+        int safePage = Math.max(page, 1);
+        int safeSize = Math.min(Math.max(pageSize, 1), 100);
+        return ApiResponse.success(
+                inventoryService.queryInventory(keyword, warehouseId, lowStockOnly, safePage, safeSize));
     }
 }

@@ -1,6 +1,7 @@
 package com.wms.service;
 
 import com.wms.common.BusinessException;
+import com.wms.common.PageResult;
 import com.wms.dto.InboundItemRequest;
 import com.wms.dto.InboundOrderCreateRequest;
 import com.wms.dto.InboundOrderResponse;
@@ -16,6 +17,8 @@ import com.wms.repository.LocationRepository;
 import com.wms.repository.ProductRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -167,11 +170,21 @@ public class InventoryService {
     }
 
     /**
-     * 库存查询 — 任务2（待实现）
+     * 库存查询 — 任务2
+     *
+     * 按 商品名称/SKU/库位编码 模糊搜索 + 仓库筛选 + 告急筛选 + 分页。
+     * 由 Repository 单条 JPQL 完成 join 与筛选（见 InventoryRepository#searchInventory），
+     * 分页由 Spring Data 自动 count，避免全表拉取。
      */
-    public List<InventoryResponse> queryInventory(String keyword, Long warehouseId,
-                                                   int page, int pageSize) {
-        // TODO: 候选人实现
-        throw new UnsupportedOperationException("请实现库存查询功能（任务2）");
+    public PageResult<InventoryResponse> queryInventory(String keyword, Long warehouseId,
+                                                        boolean lowStockOnly,
+                                                        int page, int pageSize) {
+        String safeKeyword = (keyword == null || keyword.isBlank()) ? null : keyword.trim();
+        Page<InventoryResponse> result = inventoryRepository.searchInventory(
+                safeKeyword,
+                warehouseId,
+                lowStockOnly,
+                PageRequest.of(Math.max(page - 1, 0), pageSize));
+        return new PageResult<>(result.getContent(), result.getTotalElements(), page, pageSize);
     }
 }
