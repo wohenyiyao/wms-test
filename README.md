@@ -68,10 +68,17 @@ API 文档自动生成：http://localhost:8000/docs
 
 ### 后端（Java / Spring Boot）
 
+前置依赖：
+- **MySQL 5.7**：创建库 `wms-test`（连接配置见 `backend-java/src/main/resources/application.yml`）
+- **Redis**（选做 A「出库防超卖」的库存预扣门控；不启动则出库自动降级为纯 DB 扣减，正确性不受影响）：
+  ```bash
+  redis-server            # 默认端口 6379，无密码
+  ```
+
 ```bash
 cd backend-java
-./mvnw spring-boot:run               # 启动服务 http://localhost:8080
-./mvnw test                          # 运行测试
+mvn spring-boot:run               # 启动服务 http://localhost:8080
+mvn test                          # 运行测试（39 用例，需 MySQL + Redis 就绪）
 ```
 
 API 文档：http://localhost:8080/swagger-ui.html
