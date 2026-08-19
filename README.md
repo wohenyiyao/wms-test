@@ -69,7 +69,7 @@ wms-test/
 ├── README.md                 # 本文件
 ├── TASKS.md                  # 任务清单
 ├── NOTES.md                  # 开发记录（总结/流程/各任务设计沟通/漏洞思考/Review）
-├── agent.md                  # 给 AI 助手的交接文档（环境事实/协作约定/设计决策）
+├── AGENT.md                  # 给 AI 助手的通用交接文档（项目全貌/协作约定/设计决策）
 ├── db/seed.sql               # 数据库种子数据（清空 + 正式数据）
 ├── smoke-test.ps1            # 接口冒烟脚本
 ├── backend-java/             # Spring Boot 后端
