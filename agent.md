@@ -1,4 +1,4 @@
-# agent.md — 给 AI 助手的项目交接文档
+# agent.md
 
 > 本文档是给**下一次 AI 会话**的上下文交接，记录本项目的事实、协作约定与环境坑。
 > 接手本项目的 AI 阅读顺序：README（项目介绍/启动）→ TASKS.md（任务清单）→ NOTES.md（开发记录，面试向）→ **本文档（环境与协作约定，续活必读）**。
@@ -7,7 +7,7 @@
 
 WMS 仓储管理系统（面试项目）：Java 17 + Spring Boot 3.2.5 + Vue 3 + TS + Element Plus + MySQL 5.7 + Redis。
 功能：商品/仓库/库位档案、入库（幂等防重复）、库存查询（两步分页 + 防抖）、出库（**Redis Lua 预扣 + DB 原子扣减双层防超卖**）。
-必做 3 任务 + 选做 A/B/C **全部完成**：JUnit 39 用例 + 前端 vitest 7 用例 + smoke 28 用例全绿。
+必做 3 任务 + 选做 A/B/C **全部完成**：JUnit 40 用例 + 前端 vitest 7 用例 + smoke 28 用例全绿。
 
 ## 2. 关键环境事实（本机 Windows，踩过的坑）
 
@@ -43,7 +43,7 @@ WMS 仓储管理系统（面试项目）：Java 17 + Spring Boot 3.2.5 + Vue 3 +
 - **两步分页**：`findIdsByFilters`（只查 id + count，零回表）→ `findDetailsByIds`（`id IN` 回表，按 id 重排）；OFFSET 深度上限 10000（超限 400）；pageSize ≤ 100；keyword 匹配 name/sku/locationCode；`productId` 可选过滤（出库页用）
 - **扣减注意**：`deductStock` 是 @Modifying bulk update（绕生命周期），手动刷新 updatedAt；**不要在同一事务里先 load Inventory 实体再改**
 - **明细合并**：出库明细按 (productId, locationCode) 合并后再预扣/扣减，避免"扣一半回滚"
-- **删除商品**：默认校验关联（库存 N 条 / 历史入库 N 条 / 出库 N 条），>0 返回 400 提示数量 → 前端二次确认 → `force=true` 事务内级联清理；测试库有外键，删除顺序必须先子表后父表
+- **删除商品（逻辑删除）**：`Product` 实体 `@SQLDelete` + `@SQLRestriction("deleted = 0")`——`deleteById` 变成 `UPDATE deleted=1`，所有查询/join 自动过滤已删商品（列表/搜索/详情/编辑/入库/出库引用一律 404）；不物理删除、不清关联数据（库存/历史单据保留可追溯）；`existsBySku` 必须用 native query 绕过软删过滤（SKU 全局唯一含已删；返回 long 计数防 ClassCastException）；删除接口**无 force 参数**，前端单次确认
 - **前端约定**：表格行内编辑；草稿持久化 localStorage（`wms.inbound.draft` / `wms.outbound.draft`）；防抖 300ms + 自动搜索提示；库存 < 10 红色加粗 + 告急条点击切换；出库页「可用库存」列超量前端拦截
 - **测试数据依赖**：smoke/JUnit 依赖固定 id（商品 1-5、仓库 1-2、库位 WH-A-01-01、product 1 库存 150）——seed.sql 保持兼容；测试自建数据用 UUID SKU 且用后清理
 
@@ -64,4 +64,4 @@ WMS 仓储管理系统（面试项目）：Java 17 + Spring Boot 3.2.5 + Vue 3 +
 
 - git 工作区干净，HEAD = origin/main（最后一次 push 已确认）
 - 全部任务完成；Redis 已关闭（要验证出库流程按 README 重启）
-- 可选待办：application.yml 口令改环境变量（用户提过，未做）；用户重启 IDEA 后端后可页面验证出库页/删除确认/分页保持
+- 可选待办：application.yml 口令改环境变量（用户提过，未做）；商品删除已改为逻辑删除（需重启后端生效）；用户重启 IDEA 后端后可页面验证出库页/删除/分页保持

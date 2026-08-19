@@ -6,7 +6,7 @@
 
 | 模块 | 说明 |
 |------|------|
-| 商品 / 仓库 / 库位 | 基础档案 CRUD |
+| 商品 / 仓库 / 库位 | 基础档案 CRUD（商品删除为**逻辑删除**：标记 deleted、历史单据保留可追溯） |
 | 入库管理 | 创建入库单（表格行内编辑、草稿持久化、`request_id` 幂等防重复入库） |
 | 出库管理 | 创建出库单（可用库存实时展示、超量前端拦截；**Redis Lua 预扣 + DB 原子条件更新双层防超卖**） |
 | 库存查询 | 名称/SKU/库位关键字搜索、仓库筛选、告急库存（<10 标红 + 告急条）、两步分页、300ms 防抖自动搜索 |
@@ -15,7 +15,7 @@
 
 - **后端**：Java 17 · Spring Boot 3.2 · Spring Data JPA · MySQL 5.7 · Redis（出库防超卖门控）· Lombok · springdoc
 - **前端**：Vue 3 · TypeScript · Vite · Element Plus
-- **测试**：JUnit 5 + MockMvc（后端 39 用例）· Vitest（前端 7 用例）· PowerShell 接口冒烟（28 用例）
+- **测试**：JUnit 5 + MockMvc（后端 40 用例）· Vitest（前端 7 用例）· PowerShell 接口冒烟（28 用例）
 
 ## 快速启动
 
@@ -58,7 +58,7 @@ npm run dev
 
 | 项 | 命令 | 说明 |
 |----|------|------|
-| 后端测试 | `cd backend-java && mvn test` | 39 用例：入库/库存/删除/出库 Service 与 API，含 **20 线程真实并发防超卖集成测试**（需 MySQL + Redis） |
+| 后端测试 | `cd backend-java && mvn test` | 40 用例：入库/库存/删除/出库 Service 与 API，含 **20 线程真实并发防超卖集成测试**（需 MySQL + Redis） |
 | 前端测试 | `cd frontend-vue && npm test` | 7 用例：库存筛选参数组装 + 防抖逻辑 |
 | 接口冒烟 | `powershell -ExecutionPolicy Bypass -File smoke-test.ps1` | 28 用例：商品/仓库/入库/库存/删除/出库全链路（需后端运行，默认 8080，可 `-BaseUrl` 指定） |
 
@@ -92,3 +92,4 @@ wms-test/
 - **并发安全发号**：`order_sequences` 序列表 + `LAST_INSERT_ID` 原子取号（并发测试暴露并修复"事务内查 max+1"不可靠）
 - **幂等**：`request_id` 唯一索引 + 命中返回原单；前端 UUID 幂等键失败重试复用
 - **分页**：两步查询（id 集合 + IN 回表）+ OFFSET 深度上限 10000；游标分页为演进方案
+- **逻辑删除**：商品删除标记 `deleted`（`@SQLDelete` + `@SQLRestriction` 软删），不物理删除、历史单据与库存保留可追溯；SKU 全局唯一（含已删记录）
