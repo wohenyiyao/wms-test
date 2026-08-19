@@ -55,12 +55,12 @@ WMS 仓储管理系统（面试项目）：Java 17 + Spring Boot 3.2 + Vue 3 + T
 
 ## 6. 数据库初始化（通用命令）
 
-- 一个 SQL 文件搞定：`db/seed.sql` 内含**完整表结构**（CREATE TABLE IF NOT EXISTS，与 JPA 实体一致：唯一约束/索引/外键/products.deleted 逻辑删除列）+ **种子数据**（15 商品 / 3 仓库 / 10 库位 / 19 库存行 / 历史订单示例 / 序列表 IN=3 OUT=2）；空库执行即建表灌数据，已有库重复执行只重置数据
-- 后端 JPA `ddl-auto=update` 启动时自动对齐表结构（新增列等），与 seed.sql 不冲突
+- 两个 SQL 文件分工：`db/schema.sql`（**表结构**：9 张表 CREATE TABLE IF NOT EXISTS，含 products.deleted 逻辑删除列/唯一约束/索引/外键，与 JPA 实体一致）+ `db/seed.sql`（**数据**：清空业务表 + 种子数据 15 商品 / 3 仓库 / 10 库位 / 19 库存行 / 历史订单示例 / 序列表 IN=3 OUT=2）；全新环境先 source schema.sql 再 source seed.sql，已有库可只跑 seed.sql 重置数据
+- 后端 JPA `ddl-auto=update` 启动时自动对齐表结构（新增列等），与 schema.sql 不冲突
 - 后端启动时自动：初始化序列表（next_value = 当前 DB 最大序号 + 1）→ 重建 Redis 库存镜像
 
 ## 7. 当前任务状态
 
-- 必做 3 项 + 选做 A/B/C 全部完成，测试全绿（JUnit 40 / vitest 7 / smoke 28）
+- 必做 3 项 + 选做 A/B/C 全部完成，测试全绿（JUnit 41 / vitest 7 / smoke 28）
 - 商品删除已演进为逻辑删除（修改后端代码后需重启后端生效）
 - 可选待办：`application.yml` 数据库口令改环境变量注入（未做，已记录）
