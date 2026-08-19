@@ -5,12 +5,13 @@
  * 展示了：
  * - 列表 + 搜索
  * - 新增 / 编辑弹窗
- * - 删除确认（逻辑删除：标记 deleted，关联数据保留）
+ * - 删除确认（渐进式：有关联数据先提示数量，二次确认后逻辑删除，历史记录保留）
  * - 分页（前端分页，简单示例）
  *
  * 任务 3 已修复：
  * - 编辑/新增后保持当前页码，不再跳回第 1 页
- * - 删除：由「关联校验 + force 级联清理」演进为逻辑删除（不物理删除，历史可追溯）
+ * - 删除：由「关联校验 + force 级联清理」演进为**逻辑删除**（不物理删除，历史可追溯），
+ *   保留渐进式确认提示（关联数量 + 影响范围说明）
  */
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -79,22 +80,32 @@ const handleSubmit = async () => {
   }
 }
 
-// 删除：逻辑删除（后端标记 deleted，关联数据保留）。仅单次确认防误删，无 force 分支
+// 删除：渐进式确认（保留原交互）——先普通确认；有关联数据时后端 400 提示数量 →
+// 二次确认（说明逻辑删除影响：商品不可见、历史单据与库存记录保留）后 force=true 执行
 const handleDelete = async (id: number) => {
   try {
-    await ElMessageBox.confirm('确定删除该商品吗？删除后商品将不可见（历史单据与库存记录保留）。', '确认删除', {
-      type: 'warning',
-      confirmButtonText: '确认删除',
-    })
+    await ElMessageBox.confirm('确定删除该商品吗？', '确认删除', { type: 'warning' })
     await deleteProduct(id)
     ElMessage.success('删除成功')
     await afterDeleteReload()
   } catch (e: any) {
     const msg = e.response?.data?.message || ''
     if (e.response?.status === 400 && msg) {
-      ElMessage.error(msg)
+      // 有关联数据：提示影响范围并二次确认（删除仍为逻辑删除，历史记录保留）
+      try {
+        await ElMessageBox.confirm(msg + '，是否确认删除？', '存在关联数据', {
+          type: 'warning',
+          confirmButtonText: '确认删除',
+          cancelButtonText: '取消',
+        })
+        await deleteProduct(id, true)
+        ElMessage.success('删除成功')
+        await afterDeleteReload()
+      } catch {
+        // 用户取消二次确认
+      }
     }
-    // 用户取消确认框 / 其他错误：静默
+    // 用户取消首次确认 / 其他错误：静默（确认框取消不报错）
   }
 }
 

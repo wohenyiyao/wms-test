@@ -23,8 +23,9 @@ export const createProduct = (data: { name: string; sku: string; unit?: string }
 export const updateProduct = (id: number, data: { name: string; unit?: string }) =>
   api.put(`/products/${id}`, data)
 
-export const deleteProduct = (id: number) =>
-  api.delete(`/products/${id}`)
+// force：有关联数据时后端先 400 提示数量（渐进式确认），true=二次确认后的逻辑删除
+export const deleteProduct = (id: number, force = false) =>
+  api.delete(`/products/${id}`, { params: { force } })
 
 
 // ============ 仓库 & 库位 ============
