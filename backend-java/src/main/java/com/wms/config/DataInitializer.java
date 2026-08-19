@@ -26,8 +26,13 @@ public class DataInitializer implements CommandLineRunner {
     public void run(String... args) {
         initOrderSequences();
 
-        if (productRepository.count() > 0) {
-            log.info("示例数据已存在，跳过初始化");
+        // 注意：必须用原生 SQL 计数（含已逻辑删除的商品）。
+        // Product 实体带 @SQLRestriction("deleted = 0")，productRepository.count()
+        // 只数未删记录——若商品被全部逻辑删除，count()=0 会误判"无数据"而重复初始化，
+        // 与已删的 SKU-001 撞唯一约束导致启动失败。
+        Integer totalProducts = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM products", Integer.class);
+        if (totalProducts != null && totalProducts > 0) {
+            log.info("示例数据已存在（含逻辑删除记录共 {} 条），跳过初始化", totalProducts);
             return;
         }
 

@@ -43,9 +43,14 @@ public class ProductController {
         return ApiResponse.success(productService.update(id, request));
     }
 
+    /**
+     * 删除商品（逻辑删除）。force=false 且有关联数据时返回 400 提示数量（渐进式确认）；
+     * force=true 为二次确认后的真正删除（仍是逻辑删除，不清理关联数据）。
+     */
     @DeleteMapping("/{id}")
-    public ApiResponse<Void> delete(@PathVariable Long id) {
-        productService.delete(id);
+    public ApiResponse<Void> delete(@PathVariable Long id,
+                                    @RequestParam(defaultValue = "false") boolean force) {
+        productService.delete(id, force);
         return ApiResponse.success("删除成功", null);
     }
 }
