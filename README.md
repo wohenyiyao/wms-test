@@ -23,7 +23,7 @@
 - **MySQL 5.7**：创建库 `wms-test`（连接配置见 `backend-java/src/main/resources/application.yml`，默认 root/root）
 - **Redis**（选做 A 出库防超卖门控，默认 6379 无密码）：不启动时出库自动降级为纯 DB 扣减（fail-open），正确性不受影响
 
-### 1. 初始化数据库（schema.sql 建表 + seed.sql 灌数据，两个文件分工）
+### 1. 初始化数据库（schema.sql 建表（可选执行，不执行初次启动项目会自动创建） + seed.sql 灌数据，两个文件分工）
 
 - `db/schema.sql`：**表结构**（9 张表，含 products.deleted 逻辑删除列、唯一约束、索引、外键，与 JPA 实体一致，`IF NOT EXISTS` 可重复执行）
 - `db/seed.sql`：**数据重置**（清空业务表 + 写入种子数据：15 商品 / 3 仓库 / 10 库位 / 19 库存行，含历史订单示例）
