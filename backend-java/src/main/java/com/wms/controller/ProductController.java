@@ -44,9 +44,8 @@ public class ProductController {
     }
 
     @DeleteMapping("/{id}")
-    public ApiResponse<Void> delete(@PathVariable Long id,
-                                    @RequestParam(defaultValue = "false") boolean force) {
-        productService.delete(id, force);
+    public ApiResponse<Void> delete(@PathVariable Long id) {
+        productService.delete(id);
         return ApiResponse.success("删除成功", null);
     }
 }

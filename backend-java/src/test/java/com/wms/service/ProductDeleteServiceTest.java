@@ -19,8 +19,10 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * 商品删除 Service 层测试（任务 3：删除关联校验修复的回归用例）
+ * 商品删除 Service 层测试（逻辑删除回归用例）
  *
+ * 删除 = 置 deleted 标记（不物理删除）：已删商品不可见/不可再引用，
+ * 关联数据（库存、历史单据）保留可追溯；SKU 全局唯一（含已删记录）。
  * 每个用例 @Transactional 回滚，不污染数据库。
  */
 @SpringBootTest
@@ -43,60 +45,66 @@ class ProductDeleteServiceTest {
     private InventoryService inventoryService;
 
     @Test
-    void delete_withInventory_shouldRejectWithoutForce() {
-        // given：新商品 + 入库（产生库存关联）
+    void delete_withInventory_shouldSoftDeleteAndKeepReferences() {
+        // given：新商品 + 入库（产生库存 + 历史入库记录关联）
         Product p = saveProduct();
         inventoryService.createInboundOrder(inboundRequest(p.getId(), 5, "WH-A-01-01"));
         assertTrue(inventoryRepository.countByProductId(p.getId()) >= 1);
+        assertTrue(inboundOrderItemRepository.countByProductId(p.getId()) >= 1);
 
-        // when：不传 force 删除 → 应拒绝并提示关联数量
-        BusinessException ex = assertThrows(BusinessException.class, () -> productService.delete(p.getId(), false));
-        assertEquals(400, ex.getCode());
-        assertTrue(ex.getMessage().contains("库存"), "提示应包含关联库存信息，实际: " + ex.getMessage());
+        // when：删除（逻辑删除，无需 force）
+        productService.delete(p.getId());
 
-        // then：商品与库存都还在（未被误删）
-        assertTrue(productRepository.existsById(p.getId()));
-        assertTrue(inventoryRepository.countByProductId(p.getId()) >= 1);
+        // then：商品不可见（已删），但关联数据全部保留（可追溯，无孤立脏数据）
+        assertFalse(productRepository.existsById(p.getId()), "已删商品 existsById 应为 false（软删过滤）");
+        assertTrue(inventoryRepository.countByProductId(p.getId()) >= 1, "关联库存应保留");
+        assertTrue(inboundOrderItemRepository.countByProductId(p.getId()) >= 1, "历史入库记录应保留");
     }
 
     @Test
-    void delete_withInventory_forceTrue_shouldCascadeClean() {
-        // given：新商品 + 入库（库存 + 历史入库记录关联）
+    void deletedProduct_shouldBeInvisibleInQuery() {
+        // given：新商品并删除
         Product p = saveProduct();
-        inventoryService.createInboundOrder(inboundRequest(p.getId(), 7, "WH-A-01-01"));
-        long invBefore = inventoryRepository.countByProductId(p.getId());
-        long itemBefore = inboundOrderItemRepository.countByProductId(p.getId());
-        assertTrue(invBefore >= 1);
-        assertTrue(itemBefore >= 1);
+        productService.delete(p.getId());
 
-        // when：force=true 删除
-        productService.delete(p.getId(), true);
-
-        // then：商品、关联库存、关联历史入库记录全部清理（无孤立脏数据）
-        assertFalse(productRepository.existsById(p.getId()), "商品应被删除");
-        assertEquals(0, inventoryRepository.countByProductId(p.getId()), "关联库存应被级联清理");
-        assertEquals(0, inboundOrderItemRepository.countByProductId(p.getId()), "关联历史入库记录应被级联清理");
+        // when/then：详情 404；列表搜索不到
+        BusinessException ex = assertThrows(BusinessException.class, () -> productService.getById(p.getId()));
+        assertEquals(404, ex.getCode());
+        boolean inList = productService.list(p.getSku()).stream().anyMatch(r -> r.getId().equals(p.getId()));
+        assertFalse(inList, "搜索列表不应包含已删商品");
     }
 
     @Test
-    void delete_withoutAnyReference_shouldSucceed() {
-        // given：新商品，无任何库存/入库记录关联
+    void delete_deletedProduct_shouldThrow404() {
+        // given：新商品并删除
         Product p = saveProduct();
-        assertEquals(0, inventoryRepository.countByProductId(p.getId()));
-        assertEquals(0, inboundOrderItemRepository.countByProductId(p.getId()));
+        productService.delete(p.getId());
 
-        // when：删除
-        productService.delete(p.getId(), false);
-
-        // then：成功删除
-        assertFalse(productRepository.existsById(p.getId()));
+        // when：再次删除 → 404（已删商品不可见）
+        BusinessException ex = assertThrows(BusinessException.class, () -> productService.delete(p.getId()));
+        assertEquals(404, ex.getCode());
     }
 
     @Test
     void delete_notExist_shouldThrow404() {
         BusinessException ex = assertThrows(BusinessException.class,
-                () -> productService.delete(999999L, false));
+                () -> productService.delete(999999L));
         assertEquals(404, ex.getCode());
+    }
+
+    @Test
+    void create_sameSku_afterDelete_shouldReject() {
+        // given：新商品并删除（SKU 仍被占用）
+        Product p = saveProduct();
+        productService.delete(p.getId());
+
+        // when：用同一 SKU 重建 → 应拒绝（SKU 全局唯一，含已删记录）
+        ProductCreateRequest req = new ProductCreateRequest();
+        req.setName("重建商品");
+        req.setSku(p.getSku());
+        req.setUnit("个");
+        BusinessException ex = assertThrows(BusinessException.class, () -> productService.create(req));
+        assertTrue(ex.getMessage().contains("SKU已存在"), "提示应说明 SKU 已存在，实际: " + ex.getMessage());
     }
 
     // ---------- helpers ----------
