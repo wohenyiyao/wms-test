@@ -92,4 +92,4 @@ wms-test/
 - **并发安全发号**：`order_sequences` 序列表 + `LAST_INSERT_ID` 原子取号（并发测试暴露并修复"事务内查 max+1"不可靠）
 - **幂等**：`request_id` 唯一索引 + 命中返回原单；前端 UUID 幂等键失败重试复用
 - **分页**：两步查询（id 集合 + IN 回表）+ OFFSET 深度上限 10000；游标分页为演进方案
-- **逻辑删除**：商品删除标记 `deleted`（`@SQLDelete` + `@SQLRestriction` 软删），不物理删除、历史单据与库存保留可追溯；SKU 全局唯一（含已删记录）
+- **逻辑删除**：商品删除标记 `deleted`（`@SQLDelete` + `@SQLRestriction` 软删），不物理删除、历史单据与库存保留可追溯；SKU 全局唯一（含已删记录）；删除保留渐进式确认（有关联先提示数量，二次确认后执行）

@@ -42,7 +42,7 @@ WMS 仓储管理系统（面试项目）：Java 17 + Spring Boot 3.2 + Vue 3 + T
 - **两步分页**：`findIdsByFilters`（只查 id + count，零回表）→ `findDetailsByIds`（`id IN` 回表，按 id 重排）；OFFSET 深度上限 10000（超限 400）；pageSize ≤ 100；keyword 匹配 name/sku/locationCode；`productId` 可选过滤（出库页用）
 - **扣减注意**：`deductStock` 是 @Modifying bulk update（绕生命周期），手动刷新 updatedAt；**不要在同一事务里先 load Inventory 实体再改**
 - **明细合并**：出库明细按 (productId, locationCode) 合并后再预扣/扣减，避免"扣一半回滚"
-- **删除商品（逻辑删除）**：`Product` 实体 `@SQLDelete` + `@SQLRestriction("deleted = 0")`——`deleteById` 变成 `UPDATE deleted=1`，所有查询/join 自动过滤已删商品（列表/搜索/详情/编辑/入库/出库引用一律 404）；不物理删除、不清关联数据（库存/历史单据保留可追溯）；`existsBySku` 必须用 native query 绕过软删过滤（SKU 全局唯一含已删；返回 long 计数防 ClassCastException）；删除接口**无 force 参数**，前端单次确认
+- **删除商品（逻辑删除 + 渐进式确认）**：`Product` 实体 `@SQLDelete` + `@SQLRestriction("deleted = 0")`——`deleteById` 变成 `UPDATE deleted=1`，所有查询/join 自动过滤已删商品（列表/搜索/详情/编辑/入库/出库引用一律 404）；不物理删除、不清关联数据（库存/历史单据保留可追溯）；**渐进式确认**：有关联数据（库存/历史入库/出库记录）且未传 `force` 时返回 400 提示关联数量与影响范围，前端二次确认后带 `force=true` 才执行删除（force 仅表示"确认"，删除仍是逻辑删除）；`existsBySku` 用 native query 绕过软删过滤（SKU 全局唯一含已删；返回 long 计数防 ClassCastException）；**`DataInitializer` 判断是否初始化示例数据必须用原生 SQL 计数（含已删），否则商品全删后 count()=0 会重复初始化撞 SKU 唯一约束**
 - **前端约定**：表格行内编辑；草稿持久化 localStorage（`wms.inbound.draft` / `wms.outbound.draft`）；防抖 300ms + 自动搜索提示；库存 < 10 红色加粗 + 告急条点击切换；出库页「可用库存」列超量前端拦截
 - **测试数据依赖**：smoke/JUnit 依赖固定 id（商品 1-5、仓库 1-2、库位 WH-A-01-01、product 1 库存 150）——seed.sql 保持兼容；测试自建数据用 UUID SKU 且用后清理
 
