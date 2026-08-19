@@ -266,16 +266,23 @@ Test-Case 'GET /api/inventory deep offset (page=200&pageSize=100) -> code=400 (d
 }
 
 # ---------------------------------------------------------------------
-# 6. DELETE /api/products (Task 3) - reference check before delete
+# 6. DELETE /api/products - logical delete (soft delete, no force param)
 # ---------------------------------------------------------------------
-Test-Case 'DELETE product with inventory -> code=400 (referential check), product kept' {
-    # 用种子商品 SKU-001（有库存），删除应被拒绝
-    $r = Invoke-Api DELETE '/api/products/1'
-    Assert-True ($r.Json.code -eq 400) "body.code = $($r.Json.code), expected 400, raw=$($r.Raw)"
-    Assert-True ($r.Json.message.Length -gt 0) 'error message empty'
-    # 商品应仍在
-    $g = Invoke-Api GET '/api/products/1'
-    Assert-True ($g.Status -eq 200) "product still exists: HTTP $($g.Status)"
+Test-Case 'DELETE product with inventory -> 200 (logical delete), product invisible' {
+    # 新建商品并入库（产生库存关联）：逻辑删除应成功且商品不可见（不再要求 force，关联数据保留）
+    $sku = 'SMOKE-DEL-' + (Get-Random -Minimum 100000 -Maximum 999999)
+    $c = Invoke-Api POST '/api/products' @{ name = 'SmokeDeleteMe'; sku = $sku; unit = '个' }
+    Assert-True ($c.Status -eq 200) "create HTTP = $($c.Status)"
+    $id = $c.Json.data.id
+    $ib = Invoke-Api POST '/api/inbound-orders' @{ supplierName = 'SmokeDel'; items = @(@{ productId = $id; quantity = 5; locationCode = 'WH-A-01-01' }) }
+    Assert-True ($ib.Status -eq 201) "inbound HTTP = $($ib.Status), raw=$($ib.Raw)"
+    # 删除（逻辑删除，无 force 参数）
+    $d = Invoke-Api DELETE "/api/products/$id"
+    Assert-True ($d.Status -eq 200) "delete HTTP = $($d.Status), raw=$($d.Raw)"
+    Assert-True ($d.Json.code -eq 200) "delete body.code = $($d.Json.code)"
+    # 商品不可见（404）
+    $g = Invoke-Api GET "/api/products/$id"
+    Assert-True ($g.Json.code -eq 404) "deleted product should be 404, got code=$($g.Json.code)"
 }
 
 Test-Case 'DELETE brand-new product without references -> 200, deleted' {

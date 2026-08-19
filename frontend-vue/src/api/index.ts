@@ -23,8 +23,8 @@ export const createProduct = (data: { name: string; sku: string; unit?: string }
 export const updateProduct = (id: number, data: { name: string; unit?: string }) =>
   api.put(`/products/${id}`, data)
 
-export const deleteProduct = (id: number, force = false) =>
-  api.delete(`/products/${id}`, { params: { force } })
+export const deleteProduct = (id: number) =>
+  api.delete(`/products/${id}`)
 
 
 // ============ 仓库 & 库位 ============
