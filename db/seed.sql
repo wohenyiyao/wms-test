@@ -1,13 +1,16 @@
 -- ============================================================================
--- WMS 测试库种子数据（清空全部业务表 + 正式数据）
+-- WMS 测试库：完整表结构 + 种子数据（一条命令建库建表 + 灌正式数据）
 -- ============================================================================
 -- 用途：
---   将 wms-test 库重置为一份干净、有业务感的正式数据，供演示/面试/继续开发。
+--   全新环境：先建库，再执行本文件 → 自动建表（与 JPA 实体一致）+ 灌入正式数据；
+--   已有环境：重复执行本文件 → 表结构不变（IF NOT EXISTS），数据重置为种子数据。
 -- 用法（任一）：
+--   mysql -uroot -p -e "CREATE DATABASE IF NOT EXISTS wms-test DEFAULT CHARACTER SET utf8mb4"
 --   mysql --default-character-set=utf8mb4 -uroot -p wms-test -e "source db/seed.sql"
 --   mysql --default-character-set=utf8mb4 -uroot -p wms-test < db/seed.sql
 -- 说明：
---   1. 表结构由后端 JPA（ddl-auto=update）自动维护，本文件只做【清空 + 数据】；
+--   1. 表结构内联在 0 节（与 JPA 实体/注解一致，含 products.deleted 逻辑删除列、
+--      唯一约束、筛选索引与外键）；后端 JPA（ddl-auto=update）启动后自动对齐，不冲突；
 --   2. 显式指定主键 id：商品 1-5 / 仓库 1-2 / 库位 WH-A-01-01 等为
 --      smoke-test.ps1 与 JUnit 测试依赖的固定数据，请勿改动这几行；
 --   3. 历史入库/出库单为业务示例（数量与库存期初不严格对账），
@@ -16,6 +19,106 @@
 -- ============================================================================
 
 SET NAMES utf8mb4;
+
+-- 0. 表结构（与 JPA 实体一致；IF NOT EXISTS：已由 JPA 建过的表自动跳过）
+CREATE TABLE IF NOT EXISTS warehouses (
+  id   BIGINT       NOT NULL AUTO_INCREMENT,
+  code VARCHAR(50)  NOT NULL,
+  name VARCHAR(200) NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_warehouses_code (code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS locations (
+  id           BIGINT      NOT NULL AUTO_INCREMENT,
+  warehouse_id BIGINT      NOT NULL,
+  code         VARCHAR(50) NOT NULL,
+  status       VARCHAR(20) DEFAULT 'FREE',
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_locations_code (code),
+  KEY idx_locations_warehouse_id (warehouse_id),
+  CONSTRAINT fk_locations_warehouse FOREIGN KEY (warehouse_id) REFERENCES warehouses (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS products (
+  id         BIGINT       NOT NULL AUTO_INCREMENT,
+  name       VARCHAR(200) NOT NULL,
+  sku        VARCHAR(50)  NOT NULL,
+  unit       VARCHAR(20),
+  deleted    BIT(1)       NOT NULL DEFAULT b'0',
+  created_at datetime(6),
+  updated_at datetime(6),
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_products_sku (sku),
+  KEY idx_products_name (name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS inventory (
+  id            BIGINT      NOT NULL AUTO_INCREMENT,
+  product_id    BIGINT      NOT NULL,
+  location_code VARCHAR(50) NOT NULL,
+  quantity      INT         NOT NULL DEFAULT 0,
+  updated_at    datetime(6),
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_product_location (product_id, location_code),
+  KEY idx_inventory_location_code (location_code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS inbound_orders (
+  id            BIGINT      NOT NULL AUTO_INCREMENT,
+  order_no      VARCHAR(50) NOT NULL,
+  supplier_name VARCHAR(200),
+  status        VARCHAR(20),
+  created_at    datetime(6),
+  request_id    VARCHAR(64),
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_inbound_order_no (order_no),
+  UNIQUE KEY uk_inbound_request_id (request_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS inbound_order_items (
+  id            BIGINT      NOT NULL AUTO_INCREMENT,
+  order_id      BIGINT      NOT NULL,
+  product_id    BIGINT      NOT NULL,
+  quantity      INT         NOT NULL,
+  location_code VARCHAR(50) NOT NULL,
+  PRIMARY KEY (id),
+  KEY idx_inbound_items_order (order_id),
+  KEY idx_inbound_items_product (product_id),
+  CONSTRAINT fk_inbound_items_order FOREIGN KEY (order_id) REFERENCES inbound_orders (id),
+  CONSTRAINT fk_inbound_items_product FOREIGN KEY (product_id) REFERENCES products (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS outbound_orders (
+  id            BIGINT      NOT NULL AUTO_INCREMENT,
+  order_no      VARCHAR(50) NOT NULL,
+  customer_name VARCHAR(200),
+  status        VARCHAR(20),
+  created_at    datetime(6),
+  request_id    VARCHAR(64),
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_outbound_order_no (order_no),
+  UNIQUE KEY uk_outbound_request_id (request_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS outbound_order_items (
+  id            BIGINT      NOT NULL AUTO_INCREMENT,
+  order_id      BIGINT      NOT NULL,
+  product_id    BIGINT      NOT NULL,
+  quantity      INT         NOT NULL,
+  location_code VARCHAR(50) NOT NULL,
+  PRIMARY KEY (id),
+  KEY idx_outbound_items_order (order_id),
+  KEY idx_outbound_items_product (product_id),
+  CONSTRAINT fk_outbound_items_order FOREIGN KEY (order_id) REFERENCES outbound_orders (id),
+  CONSTRAINT fk_outbound_items_product FOREIGN KEY (product_id) REFERENCES products (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS order_sequences (
+  seq_type   VARCHAR(20) NOT NULL,
+  next_value BIGINT      NOT NULL,
+  PRIMARY KEY (seq_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 1. 清空业务表（先子表后父表，关闭外键检查以便 TRUNCATE）
 SET FOREIGN_KEY_CHECKS = 0;

@@ -23,18 +23,18 @@
 - **MySQL 5.7**：创建库 `wms-test`（连接配置见 `backend-java/src/main/resources/application.yml`，默认 root/root）
 - **Redis**（选做 A 出库防超卖门控，默认 6379 无密码）：不启动时出库自动降级为纯 DB 扣减（fail-open），正确性不受影响
 
-### 1. 初始化数据库（数据库表结构被改过，需要运行新的SQL文件）
+### 1. 初始化数据库（一个 SQL 文件 = 完整表结构 + 种子数据）
 
-首次运行或想重置为正式种子数据时，执行 `db/seed.sql`（清空业务表 + 写入种子数据：15 商品 / 3 仓库 / 10 库位 / 19 库存行，含历史订单示例）：
+首次运行或想重置时，执行 `db/seed.sql` 即可——**自动建表（含 products.deleted 逻辑删除列、唯一约束、索引、外键，与 JPA 实体一致）+ 写入种子数据**（15 商品 / 3 仓库 / 10 库位 / 19 库存行，含历史订单示例）：
 
 ```bash
 # 若库不存在先创建：
-mysql -uroot -p -e "CREATE DATABASE wms-test DEFAULT CHARACTER SET utf8mb4"
-# 执行种子数据：
+mysql -uroot -p -e "CREATE DATABASE IF NOT EXISTS wms-test DEFAULT CHARACTER SET utf8mb4"
+# 建表 + 灌数据（可重复执行：表结构不变，数据重置为种子数据）：
 mysql --default-character-set=utf8mb4 -uroot -p wms-test -e "source db/seed.sql"
 ```
 
-> 表结构由后端 JPA（`ddl-auto=update`）自动创建/更新，无需手工建表；`seed.sql` 只负责清空 + 数据。
+> 后端 JPA（`ddl-auto=update`）启动后会自动对齐表结构（新增列等），与 seed.sql 互不冲突。
 
 ### 2. 启动后端（http://localhost:8080）
 
@@ -70,7 +70,7 @@ wms-test/
 ├── TASKS.md                  # 任务清单
 ├── NOTES.md                  # 开发记录（总结/流程/各任务设计沟通/漏洞思考/Review）
 ├── AGENT.md                  # 给 AI 助手的通用交接文档（项目全貌/协作约定/设计决策）
-├── db/seed.sql               # 数据库种子数据（清空 + 正式数据）
+├── db/seed.sql               # 完整 SQL：建表（含 deleted 列/索引/外键）+ 种子数据
 ├── smoke-test.ps1            # 接口冒烟脚本
 ├── backend-java/             # Spring Boot 后端
 │   └── src/main/java/com/wms/

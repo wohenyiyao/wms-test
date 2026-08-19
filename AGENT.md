@@ -55,8 +55,8 @@ WMS 仓储管理系统（面试项目）：Java 17 + Spring Boot 3.2 + Vue 3 + T
 
 ## 6. 数据库初始化（通用命令）
 
-- 表结构由 JPA `ddl-auto=update` 自动创建/更新，无需手工建表
-- 种子数据：`mysql -uroot -p wms-test -e "source db/seed.sql"`（清空业务表 + 15 商品 / 3 仓库 / 10 库位 / 19 库存行 / 历史订单示例 / 序列表 IN=3 OUT=2）
+- 一个 SQL 文件搞定：`db/seed.sql` 内含**完整表结构**（CREATE TABLE IF NOT EXISTS，与 JPA 实体一致：唯一约束/索引/外键/products.deleted 逻辑删除列）+ **种子数据**（15 商品 / 3 仓库 / 10 库位 / 19 库存行 / 历史订单示例 / 序列表 IN=3 OUT=2）；空库执行即建表灌数据，已有库重复执行只重置数据
+- 后端 JPA `ddl-auto=update` 启动时自动对齐表结构（新增列等），与 seed.sql 不冲突
 - 后端启动时自动：初始化序列表（next_value = 当前 DB 最大序号 + 1）→ 重建 Redis 库存镜像
 
 ## 7. 当前任务状态
